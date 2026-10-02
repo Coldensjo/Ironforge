@@ -53,3 +53,23 @@ describe.skipIf(!archives.length)('a real archive', () => {
 		expect(read).toBeGreaterThan(files.length * 0.5);
 	}, 120000);
 });
+
+// A vanilla 1.12.1 client, where there is one: IRONFORGE_VANILLA, or the folder it was tried with.
+const VANILLA = process.env.IRONFORGE_VANILLA ?? 'C:/Servers/Software/SoloCraft 1.12.1';
+
+describe.skipIf(!existsSync(join(VANILLA, 'Data', 'dbc.MPQ')))('a vanilla 1.12.1 client', () => {
+	it('reads its map table and the Eastern Kingdoms map files, through its patches', async () => {
+		const { MpqStorage } = await import('../src/mpq/storage');
+		const { Dbc } = await import('../src/mpq/dbc');
+		const storage = await MpqStorage.open(new NodeSource(VANILLA));
+		expect(storage.archives.at(-1)?.name).toBe('patch-2.MPQ');
+		const maps = new Dbc((await storage.read('DBFilesClient/Map.dbc'))!);
+		expect(maps.getString(0, 1)).toBe('Azeroth');
+		expect(maps.getString(1, 1)).toBe('Kalimdor');
+		for (const path of ['World/Maps/Azeroth/Azeroth.wdt', 'World/Maps/Azeroth/Azeroth.wdl', 'World/Maps/Azeroth/Azeroth_32_48.adt']) {
+			const file = await storage.read(path);
+			// Chunk IDs are stored reversed: 'MVER' reads as 'REVM'.
+			expect(new TextDecoder().decode(file!.subarray(0, 4)), path).toBe('REVM');
+		}
+	}, 60000);
+});
