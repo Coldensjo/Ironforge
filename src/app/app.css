@@ -1,0 +1,182 @@
+/* The launcher and the app's dialogs, in the game's frames (see ui/wow.css). */
+.launcher {
+	position: fixed;
+	inset: 0;
+	z-index: 10;
+	display: grid;
+	place-items: center;
+	padding: 24px;
+	background: radial-gradient(ellipse at 50% 30%, #2a1d14 0%, #0e0a08 70%);
+	overflow: auto;
+}
+
+.launcher-card {
+	width: min(860px, 100%);
+	padding: 18px 26px 24px;
+}
+
+.launcher-head {
+	display: flex;
+	align-items: center;
+	gap: 18px;
+	margin-bottom: 14px;
+}
+
+.launcher-head h1 {
+	margin: 0;
+	font-size: 40px;
+	line-height: 1;
+}
+
+.launcher-head p {
+	margin: 6px 0 0;
+}
+
+.launcher-continue {
+	display: block;
+	width: 100%;
+	height: 30px;
+	margin-bottom: 16px;
+	font-size: 14px;
+}
+
+.launcher-columns {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 28px;
+}
+
+.launcher-columns section {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	align-items: flex-start;
+	min-width: 0;
+}
+
+.launcher-columns h2 {
+	margin: 0;
+	font-size: 17px;
+	font-weight: 400;
+}
+
+.launcher-field {
+	display: grid;
+	grid-template-columns: 52px 1fr;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+}
+
+.launcher-worlds {
+	display: grid;
+	gap: 6px;
+	width: 100%;
+}
+
+.launcher-world {
+	display: grid;
+	gap: 2px;
+	text-align: left;
+	padding: 8px 10px;
+	background: rgba(0, 0, 0, 0.35);
+	border: 1px solid rgba(255, 255, 255, 0.12);
+	border-radius: 4px;
+	font: inherit;
+	color: inherit;
+}
+
+.launcher-world .wow-muted {
+	font-size: 12px;
+}
+
+.launcher-world.on {
+	border-color: var(--wow-yellow);
+	background: rgba(255, 209, 0, 0.1);
+}
+
+.launcher-recent-title {
+	margin: 10px 0 0;
+	font-size: 14px;
+	font-weight: 400;
+}
+
+.launcher-recent {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	width: 100%;
+	max-height: 280px;
+	overflow-y: auto;
+}
+
+.launcher-recent li {
+	display: grid;
+	grid-template-columns: 1fr auto;
+	align-items: center;
+	padding: 5px 6px;
+}
+
+.launcher-recent li.wow-row {
+	grid-template-columns: 1fr auto;
+	grid-template-rows: auto auto;
+}
+
+.launcher-recent-name {
+	font: 14px var(--wow-label);
+	color: var(--wow-yellow);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.launcher-recent li .wow-muted {
+	grid-column: 1;
+	font-size: 12px;
+}
+
+.launcher-forget {
+	grid-column: 2;
+	grid-row: 1 / span 2;
+}
+
+/* Questions and names */
+.app-dialog-backdrop {
+	position: fixed;
+	inset: 0;
+	z-index: 20;
+	display: grid;
+	place-items: center;
+	background: rgba(0, 0, 0, 0.5);
+}
+
+.app-dialog {
+	width: min(420px, calc(100vw - 32px));
+	padding: 12px 20px 18px;
+}
+
+.app-dialog h2 {
+	margin: 2px 0 8px;
+	font-size: 22px;
+}
+
+.app-dialog p {
+	margin: 0 0 10px;
+}
+
+.app-dialog-input {
+	width: 100%;
+	margin-bottom: 12px;
+}
+
+.app-dialog-buttons {
+	display: flex;
+	gap: 8px;
+	justify-content: flex-end;
+}
+
+@media (max-width: 700px) {
+	.launcher-columns {
+		grid-template-columns: 1fr;
+	}
+}

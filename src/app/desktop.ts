@@ -6,6 +6,14 @@ export interface DesktopApi {
 	saveText(name: string, text: string): Promise<string | null>;
 	/** Opens a file the user picks; its name and text, or null if they cancel. */
 	openText(): Promise<{ name: string; text: string } | null>;
+	/** Saves a project to its file, or (path null) to one the user picks; the path, or null if they cancel. */
+	saveProject(path: string | null, name: string, text: string): Promise<string | null>;
+	/** Opens a project file the user picks. */
+	openProject(): Promise<{ path: string; text: string } | null>;
+	/** Reads a project file by its path (a recent one); null if it's gone. */
+	readProject(path: string): Promise<{ path: string; text: string } | null>;
+	/** Project files opened or saved lately, newest first. */
+	recentProjects(): Promise<{ path: string; name: string; modified: string }[]>;
 }
 
 /** The desktop app's extras, when running in it. */

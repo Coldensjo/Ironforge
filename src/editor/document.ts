@@ -53,9 +53,9 @@ const FIRST_NEW_GUID = 9_000_000;
 /** The same for new copies of the map's own models, above any ADT placement's unique ID. */
 const FIRST_NEW_MODEL_ID = 1_000_000_000;
 const DB_NAME = 'mapExplorer';
-/** Version 2 added the ground's height changes. */
-const DB_VERSION = 2;
-const DB_STORES = ['spawnEdits', 'terrainEdits'];
+/** Version 2 added the ground's height changes, 3 the browser's saved projects. */
+const DB_VERSION = 3;
+const DB_STORES = ['spawnEdits', 'terrainEdits', 'projects'];
 const EXPORT_FORMAT = 'mapexplorer-spawn-edits';
 
 let database: Promise<IDBDatabase | null> | null = null;
@@ -78,7 +78,7 @@ function openDatabase(): Promise<IDBDatabase | null> {
 }
 
 /** Edits saved in the browser, so they're still there next visit. Without storage, they last the visit. */
-class EditStore<T> {
+export class EditStore<T> {
 	constructor(private readonly name: string) {}
 
 	async all(): Promise<[string, T][]> {
@@ -101,38 +101,46 @@ class EditStore<T> {
 		});
 	}
 
-	/** Saves an edit; undefined forgets it. */
+	/** Saves an edit (undefined forgets it); resolves once it's written. */
 	async put(id: string, value: T | undefined): Promise<void> {
-		const db = await openDatabase();
-		if (!db) return;
-		try {
-			const store = db.transaction(this.name, 'readwrite').objectStore(this.name);
-			if (value === undefined) store.delete(id);
-			else store.put(value, id);
-		} catch (e) {
-			console.warn('Edit not saved:', e);
-		}
+		await this.write((store) => (value === undefined ? store.delete(id) : store.put(value, id)), 'Edit not saved:');
 	}
 
+	/** Forgets everything in the store; resolves once that's written. */
 	async clear(): Promise<void> {
+		await this.write((store) => store.clear(), 'Edits not cleared:');
+	}
+
+	/** One read-write step, waited for until the database has it (a reload straight after keeps it). */
+	private async write(step: (store: IDBObjectStore) => void, failure: string): Promise<void> {
 		const db = await openDatabase();
-		try {
-			db?.transaction(this.name, 'readwrite').objectStore(this.name).clear();
-		} catch (e) {
-			console.warn('Edits not cleared:', e);
-		}
+		if (!db) return;
+		await new Promise<void>((resolve) => {
+			try {
+				const transaction = db.transaction(this.name, 'readwrite');
+				step(transaction.objectStore(this.name));
+				transaction.oncomplete = () => resolve();
+				transaction.onerror = transaction.onabort = () => {
+					console.warn(failure, transaction.error);
+					resolve();
+				};
+			} catch (e) {
+				console.warn(failure, e);
+				resolve();
+			}
+		});
 	}
 }
 
 /** Float32Array <-> base64, for ground in exported files. */
-function toBase64(values: Float32Array): string {
+export function toBase64(values: Float32Array): string {
 	const bytes = new Uint8Array(values.buffer, values.byteOffset, values.byteLength);
 	let text = '';
 	for (let i = 0; i < bytes.length; i += 0x8000) text += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
 	return btoa(text);
 }
 
-function fromBase64(text: string): Float32Array {
+export function fromBase64(text: string): Float32Array {
 	const bytes = Uint8Array.from(atob(text), (c) => c.charCodeAt(0));
 	return new Float32Array(bytes.buffer);
 }
@@ -467,4 +475,18 @@ export class EditDocument {
 		this.canRedo.value = this.redoStack.length > 0;
 		this.version.value++;
 	}
+}
+
+/**
+ * Replaces the working copy saved in the browser (what the document loads) with a project's
+ * edits and ground, before the world loads; the document then reads them as it starts.
+ */
+export async function replaceWorkingCopy(edits: Record<string, SpawnEdit>, terrain: Record<string, string>): Promise<void> {
+	const spawns = new EditStore<SpawnEdit>('spawnEdits');
+	const ground = new EditStore<Float32Array>('terrainEdits');
+	await Promise.all([spawns.clear(), ground.clear()]);
+	await Promise.all([
+		...Object.entries(edits).map(([id, edit]) => spawns.put(id, edit)),
+		...Object.entries(terrain).map(([tile, data]) => ground.put(tile, fromBase64(data))),
+	]);
 }

@@ -1,6 +1,7 @@
 import type { Signal } from '@preact/signals';
 import type { AsyncStorageApi } from '../../worker/protocol';
 import type { HudInfo, Viewer, ViewSettings } from '../../viewer/viewer';
+import type { Projects } from '../../app/projects';
 import type { EditDocument } from '../document';
 import type { EditorViewport } from '../viewport';
 
@@ -9,6 +10,8 @@ export interface EditorContext {
 	viewer: Viewer;
 	doc: EditDocument;
 	viewport: EditorViewport;
+	/** Saving and opening projects. */
+	projects: Projects;
 	storage: AsyncStorageApi;
 	/** Where the camera is, as the explorer's HUD shows it. */
 	hud: Signal<HudInfo | null>;

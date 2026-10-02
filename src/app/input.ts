@@ -35,6 +35,8 @@ export function bindKeys(scope: Workspace | 'both', handler: KeyHandler, options
 
 // One listener, ahead of everything else on the page.
 window.addEventListener('keydown', (e) => {
+	// A dialog (a question, a name to type) keeps its keys to itself.
+	if ((e.target as Element | null)?.closest?.('[aria-modal="true"]')) return;
 	const typing = isTyping(e);
 	const active = workspace.value;
 	for (const scope of [active, 'both'] as const) {

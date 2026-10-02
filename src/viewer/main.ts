@@ -10,6 +10,9 @@ import { Minimap } from './minimap';
 import { isTyping } from './typing';
 import { signal } from '@preact/signals';
 import { desktop } from '../app/desktop';
+import { showLauncher } from '../app/launcher';
+import { readSession, takeNext } from '../app/project';
+import { Projects } from '../app/projects';
 import { bindKeys, workspace } from '../app/input';
 import { EditDocument } from '../editor/document';
 import { mountEditor } from '../editor/index';
@@ -212,11 +215,17 @@ async function explore(): Promise<void> {
 		const font = loadGameFont();
 		// The game's interface art for the editor, read alongside the world.
 		const skin = loadWowSkin(storage).catch((e) => console.warn('Interface art unavailable:', e));
+		// Which project: the one the page reloaded into, or one chosen in the launcher (in the game's frames).
+		if (takeNext() !== 'continue' || !readSession()) {
+			await skin;
+			await showLauncher();
+		}
+		const session = readSession()!;
 		const viewer = new Viewer($('view'), storage, showHud, showInfo, $('nameplates'));
 		// For poking at the scene from the console (and test scripts) while developing.
 		if (import.meta.env.DEV) (globalThis as unknown as { mapExplorerViewer: Viewer }).mapExplorerViewer = viewer;
 		viewer.onShotStatus = showShotStatus;
-		await viewer.load((text) => showProgress(text));
+		await viewer.load((text) => showProgress(text), session.world);
 		await Promise.all([font, skin]);
 		showProgress('Starting');
 		$('start').hidden = true;
@@ -229,6 +238,8 @@ async function explore(): Promise<void> {
 		setUpHighlights(viewer);
 		setUpSound(viewer);
 		setUpHelp();
+		// The game's places only make sense in its own world.
+		if (session.world === 'sandbox') $('goto').hidden = true;
 		await setUpWorkspaces(viewer);
 	} catch (e) {
 		setStatus(`Could not start: ${(e as Error).message}`, true);
@@ -717,11 +728,12 @@ async function setUpWorkspaces(viewer: Viewer): Promise<void> {
 	const doc = new EditDocument(host);
 	viewer.heightDeltas = (key) => doc.heightDelta(key);
 	const viewport = new EditorViewport(host, doc);
+	const projects = new Projects(viewer, doc);
 	viewer.onFrame.push(() => viewport.update());
 	// For test scripts and the console while developing.
 	if (import.meta.env.DEV) Object.assign(globalThis, { mapExplorerEditor: { doc, viewport } });
 	mountEditor({
-		viewer, doc, viewport, storage,
+		viewer, doc, viewport, storage, projects,
 		hud: hudInfo,
 		settings: {
 			get: () => viewer.settings,
@@ -767,7 +779,20 @@ async function setUpWorkspaces(viewer: Viewer): Promise<void> {
 		return true;
 	});
 	$('menu-edit-world').addEventListener('click', toggle);
+	// Projects: Ctrl+S saves, Ctrl+Shift+S saves as, Ctrl+O opens, in either workspace.
+	bindKeys('both', (e) => {
+		if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+		if (e.code === 'KeyS') void projects.save(e.shiftKey);
+		else if (e.code === 'KeyO' && !e.shiftKey) void projects.open();
+		else return;
+		return true;
+	});
+	$('menu-save').addEventListener('click', () => void projects.save());
+	$('menu-save-as').addEventListener('click', () => void projects.save(true));
+	$('menu-open').addEventListener('click', () => void projects.open());
+	$('menu-close').addEventListener('click', () => void projects.close());
 	await doc.load();
+	projects.watch();
 }
 
 // --- Sound ---

@@ -31,6 +31,9 @@ export interface TemplateListing {
 	objects: [number, string, string][];
 }
 import { buildSplatTerrain, type SplatTerrain } from './splatMesh';
+import {
+	isSandbox, SANDBOX_MAP_ID, sandboxFarTile, sandboxHasTile, sandboxRoot, sandboxTex, sandboxTileTexture, sandboxTiles,
+} from './sandbox';
 import { buildTerrainMesh, type TerrainGeometry } from './terrainMesh';
 
 /** MPHD flags that switch alpha maps from 4-bit to 8-bit. */
@@ -124,6 +127,7 @@ export class WorldLoader {
 
 	/** The Map.db2 ID of a map's WDT, or null for a WDT no map uses. */
 	private async mapIdOf(wdtFdid: number): Promise<number | null> {
+		if (isSandbox(wdtFdid)) return SANDBOX_MAP_ID;
 		const known = KNOWN_MAPS.find((m) => m.wdt === wdtFdid);
 		if (known) return known.mapId;
 		this.mapIds ??= loadTable(this.storage, DB2_FILES.Map).then((table) => {
@@ -182,6 +186,7 @@ export class WorldLoader {
 	}
 
 	async loadFarTiles(wdtFdid: number, wdlFdid: number): Promise<FarTile[]> {
+		if (isSandbox(wdtFdid)) return sandboxTiles().map(([x, y]) => sandboxFarTile(x, y));
 		const wdt = await this.maps.wdt(wdtFdid);
 		const wdl = parseWdl(await this.storage.readFile(wdlFdid));
 		return wdl.map((t) => ({
@@ -195,6 +200,7 @@ export class WorldLoader {
 
 	/** Baked map textures, starting at the largest mip no bigger than maxSize. */
 	async loadTileTextures(wdtFdid: number, coords: [number, number][], maxSize: number, compressed: boolean): Promise<TileTexture[]> {
+		if (isSandbox(wdtFdid)) return coords.map(([x, y]) => ({ x, y, texture: sandboxTileTexture() }));
 		const wdt = await this.maps.wdt(wdtFdid);
 		return Promise.all(coords.map(async ([x, y]) => ({
 			x,
@@ -204,6 +210,7 @@ export class WorldLoader {
 	}
 
 	async loadNearTile(wdtFdid: number, x: number, y: number, compressed: boolean): Promise<NearTile> {
+		if (isSandbox(wdtFdid)) return this.sandboxNearTile(x, y);
 		const wdt = await this.maps.wdt(wdtFdid);
 		const tile = wdt.tiles[y * 64 + x];
 		if (!tile) throw new Error(`Map has no tile ${x}_${y}`);
@@ -248,8 +255,24 @@ export class WorldLoader {
 		};
 	}
 
+	/** A tile of the sandbox's field, built as a read ADT would be (with the grass that grows on it). */
+	private async sandboxNearTile(x: number, y: number): Promise<NearTile> {
+		if (!sandboxHasTile(x, y)) throw new Error(`The sandbox has no tile ${x}_${y}`);
+		const root = sandboxRoot(x, y);
+		const tex = sandboxTex();
+		const terrain = buildSplatTerrain(root, tex);
+		const groundEffects = await this.groundEffects();
+		const clutter = groundEffects?.source(root, tex, terrain.heights, tileGrids(root).inner, terrain.holes) ?? null;
+		return {
+			x, y, terrain, fallback: null, heights: terrain.heights, holes: terrain.holes, liquids: [],
+			sea: new Uint8Array(256), areaIds: new Uint32Array(256), clutter, flow: null,
+		};
+	}
+
 	/** M2 and WMO placements on a tile, from its _obj0 file. */
 	async loadTileObjects(wdtFdid: number, x: number, y: number): Promise<Placement[]> {
+		// The sandbox starts empty: what's on it is what's placed in the editor.
+		if (isSandbox(wdtFdid)) return [];
 		const wdt = await this.maps.wdt(wdtFdid);
 		const tile = wdt.tiles[y * 64 + x];
 		const [placements, spawns, portals] = await Promise.all([
@@ -370,8 +393,13 @@ export class WorldLoader {
 		}));
 	}
 
-	loadLighting(mapIds: number[]): Promise<LightingData> {
-		return loadLighting(this.storage, mapIds);
+	async loadLighting(mapIds: number[]): Promise<LightingData> {
+		if (!mapIds.includes(SANDBOX_MAP_ID)) return loadLighting(this.storage, mapIds);
+		// The sandbox has no lights of its own: it takes the Eastern Kingdoms' sky (its global light).
+		const data = await loadLighting(this.storage, [...mapIds, 0]);
+		const global = data.zones.find((z) => z.mapId === 0 && z.inner === 0 && z.outer === 0) ?? data.zones.find((z) => z.mapId === 0);
+		if (global) data.zones.push({ ...global, mapId: SANDBOX_MAP_ID, x: 0, y: 0, z: 0, inner: 0, outer: 0 });
+		return data;
 	}
 
 	loadAreas(): Promise<AreaInfo[]> {

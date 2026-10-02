@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { SunLight } from 'three/addons/lights/SunLight.js';
 import { TILE_SIZE } from '../formats/adt';
 import { KNOWN_MAPS } from '../explorer/maps';
+import { SANDBOX_CENTER, SANDBOX_MAP_ID, SANDBOX_NAME, SANDBOX_WDT } from '../explorer/sandbox';
 import type { FarTile, InstanceMap, MapCategory } from '../explorer/world';
 import type { AsyncStorageApi } from '../worker/protocol';
 import type { AreaInfo } from '../explorer/lighting';
@@ -125,6 +126,9 @@ THREE.ShaderChunk.lights_pars_begin = THREE.ShaderChunk.lights_pars_begin.replac
 	'max( pow( lightDistance, decayExponent ), 0.01 )',
 	`max( pow( lightDistance, decayExponent ), ${TORCH_NEAR_SQUARED.toFixed(1)} )`,
 );
+
+/** Which world a project is built in: the game's own (Azeroth), or the sandbox's grass field. */
+export type WorldKind = 'azeroth' | 'sandbox';
 
 export interface HudInfo {
 	location: string;
@@ -266,6 +270,8 @@ export class Viewer {
 	private objects!: ObjectManager;
 	/** The stroke around the editor's selection. */
 	private outline: SelectionOutline | null = null;
+	/** The world loaded (see load). */
+	world: WorldKind = 'azeroth';
 	/** Whether clicking the world shows what was clicked (the explorer); the editor turns it off. */
 	clicksSelect = true;
 	/** Called every frame, before the world updates (the editor's selection circles). */
@@ -543,8 +549,12 @@ export class Viewer {
 		return supportsCompressedTextures(this.renderer);
 	}
 
-	/** Loads the low-detail world, places the camera and starts streaming textures. */
-	async load(onStatus: (text: string) => void): Promise<void> {
+	/**
+	 * Loads the low-detail world, places the camera and starts streaming textures. world picks
+	 * Azeroth (the continents, with every other map laid out in the sea) or the sandbox's field.
+	 */
+	async load(onStatus: (text: string) => void, world: WorldKind = 'azeroth'): Promise<void> {
+		this.world = world;
 		const anisotropy = this.renderer.capabilities.getMaxAnisotropy();
 		// Compiles shaders in the background (KHR_parallel_shader_compile) before objects are shown.
 		const prepare = (object: THREE.Object3D, shadowPass?: boolean) => this.post.compileAsync(this.renderer, object, this.camera, this.scene, shadowPass);
@@ -564,15 +574,22 @@ export class Viewer {
 		this.terrain.clutter = this.clutter;
 		this.scene.add(this.terrain.group, this.objects.group, this.clutter.group);
 
-		const loaded: { map: (typeof KNOWN_MAPS)[number]; tiles: FarTile[] }[] = [];
-		for (const map of KNOWN_MAPS) {
-			onStatus(`Reading ${map.name} heightmap`);
-			loaded.push({ map, tiles: await this.storage.loadFarTiles(map.wdt, map.wdl) });
+		if (world === 'sandbox') {
+			onStatus('Making the sandbox');
+			const field: ContinentPlacement = { name: SANDBOX_NAME, mapId: SANDBOX_MAP_ID, wdt: SANDBOX_WDT, offsetX: 0, offsetY: 0 };
+			this.continents = [field];
+			this.terrain.addContinent(field, await this.storage.loadFarTiles(SANDBOX_WDT, 0));
+		} else {
+			const loaded: { map: (typeof KNOWN_MAPS)[number]; tiles: FarTile[] }[] = [];
+			for (const map of KNOWN_MAPS) {
+				onStatus(`Reading ${map.name} heightmap`);
+				loaded.push({ map, tiles: await this.storage.loadFarTiles(map.wdt, map.wdl) });
+			}
+			this.continents = layoutContinents(loaded);
+			loaded.forEach(({ tiles }, i) => this.terrain.addContinent(this.continents[i], tiles));
+			onStatus('Placing dungeons and other maps');
+			await this.placeMaps();
 		}
-		this.continents = layoutContinents(loaded);
-		loaded.forEach(({ tiles }, i) => this.terrain.addContinent(this.continents[i], tiles));
-		onStatus('Placing dungeons and other maps');
-		await this.placeMaps();
 		this.terrain.buildSeaMask();
 		this.addOcean();
 
@@ -1018,10 +1035,12 @@ export class Viewer {
 	}
 
 	private startPosition(): THREE.Vector3 {
-		const ek = this.continents[0];
-		const x = (32.5 + ek.offsetX) * TILE_SIZE;
-		const z = (48.95 + ek.offsetY) * TILE_SIZE;
-		return new THREE.Vector3(x, this.terrain.heightAt(x, z) + 140, z);
+		const first = this.continents[0];
+		// Azeroth: over Northshire. The sandbox: above its middle, low enough to see the grass.
+		const [tx, ty, above] = this.world === 'sandbox' ? [SANDBOX_CENTER, SANDBOX_CENTER + 0.1, 40] : [32.5, 48.95, 140];
+		const x = (tx + first.offsetX) * TILE_SIZE;
+		const z = (ty + first.offsetY) * TILE_SIZE;
+		return new THREE.Vector3(x, this.terrain.heightAt(x, z) + above, z);
 	}
 
 	private plates: Plate[] = [];

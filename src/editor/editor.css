@@ -128,8 +128,18 @@ body.ws-edit {
 	opacity: 0.6;
 }
 
-.ed-menubar-title {
+/* The project's name, with a star while it has unsaved changes. */
+.ed-project {
 	margin-left: auto;
+	font-size: 13px;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	max-width: 30vw;
+}
+
+.ed-menubar-title {
+	margin-left: 18px;
 	margin-right: 12px;
 	font-size: 17px;
 	letter-spacing: 0.03em;

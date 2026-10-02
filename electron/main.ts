@@ -4,7 +4,7 @@
 // browser can't do through the preload script: choosing the game folder, saving and opening files.
 import { app, BrowserWindow, dialog, ipcMain, protocol, shell } from 'electron';
 import { createReadStream, existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, extname, join, resolve, sep } from 'node:path';
+import { basename, dirname, extname, join, resolve, sep } from 'node:path';
 import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { byteRange, findWow, installRoot, wowRequest } from './wowInstall.js';
@@ -31,6 +31,18 @@ protocol.registerSchemesAsPrivileged([
 
 interface Settings {
 	wowDir?: string;
+	/** Project files opened or saved lately, newest first. */
+	recent?: string[];
+}
+
+/** Project files remembered as recent. */
+const RECENT_LIMIT = 12;
+const PROJECT_FILTER = { name: 'Ironforge project', extensions: ['ironforge'] };
+
+function rememberRecent(path: string): void {
+	const settings = readSettings();
+	settings.recent = [path, ...(settings.recent ?? []).filter((p) => p !== path)].slice(0, RECENT_LIMIT);
+	saveSettings(settings);
 }
 
 const settingsFile = () => join(app.getPath('userData'), 'settings.json');
@@ -126,6 +138,43 @@ ipcMain.handle('file:open', async (event) => {
 	return { name: path.split(/[\\/]/).pop() ?? path, text: readFileSync(path, 'utf8') };
 });
 
+ipcMain.handle('project:save', async (event, path: string | null, name: string, text: string) => {
+	let target = path;
+	if (!target) {
+		const window = BrowserWindow.fromWebContents(event.sender);
+		const options: Electron.SaveDialogOptions = { title: 'Save project', defaultPath: `${name}.ironforge`, filters: [PROJECT_FILTER] };
+		const result = window ? await dialog.showSaveDialog(window, options) : await dialog.showSaveDialog(options);
+		if (result.canceled || !result.filePath) return null;
+		target = result.filePath;
+	}
+	writeFileSync(target, text);
+	rememberRecent(target);
+	return target;
+});
+
+ipcMain.handle('project:open', async (event) => {
+	const window = BrowserWindow.fromWebContents(event.sender);
+	const options: Electron.OpenDialogOptions = { title: 'Open project', properties: ['openFile'], filters: [PROJECT_FILTER] };
+	const result = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options);
+	const path = result.filePaths[0];
+	if (result.canceled || !path) return null;
+	rememberRecent(path);
+	return { path, text: readFileSync(path, 'utf8') };
+});
+
+ipcMain.handle('project:read', (_event, path: string) => {
+	if (!existsSync(path)) return null;
+	rememberRecent(path);
+	return { path, text: readFileSync(path, 'utf8') };
+});
+
+/** Recent project files that still exist, with when each was last saved. */
+ipcMain.handle('project:recent', () => (readSettings().recent ?? []).filter((p) => existsSync(p)).map((path) => ({
+	path,
+	name: basename(path, extname(path)),
+	modified: statSync(path).mtime.toISOString(),
+})));
+
 // --- The window ---
 
 function createWindow(): void {
@@ -159,6 +208,19 @@ function createWindow(): void {
 			event.preventDefault();
 			if (/^https?:/.test(url)) void shell.openExternal(url);
 		}
+	});
+	// Closing (or reloading) with unsaved changes: the page says so (beforeunload), and this asks.
+	window.webContents.on('will-prevent-unload', (event) => {
+		const choice = dialog.showMessageBoxSync(window, {
+			type: 'question',
+			buttons: ['Leave without saving', 'Stay'],
+			defaultId: 1,
+			cancelId: 1,
+			title: 'Unsaved changes',
+			message: 'This project has changes that aren\'t saved.',
+			detail: 'Leave anyway, and lose them?',
+		});
+		if (choice === 0) event.preventDefault();
 	});
 	// F12: the developer tools, F5: reload (there's no browser to do either).
 	window.webContents.on('before-input-event', (_event, input) => {

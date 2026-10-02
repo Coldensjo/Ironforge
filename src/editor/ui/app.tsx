@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import type { ViewSettings } from '../../viewer/viewer';
 import type { Tool } from '../viewport';
 import { desktop, saveTextFile } from '../../app/desktop';
+import { projectTitle } from '../../app/projects';
 import { Check, Slot } from './common';
 import type { EditorContext } from './context';
 import { Inspector, Outliner } from './inspector';
@@ -113,6 +114,12 @@ function MenuBar({ ctx }: { ctx: EditorContext }) {
 	return (
 		<nav class="ed-menubar wow-panel" ref={bar}>
 			<Menu label="File" {...props}>
+				<Item label="New project…" onClick={() => void ctx.projects.close()} />
+				<Item label="Open project…" keys="Ctrl+O" onClick={() => void ctx.projects.open()} />
+				<Item label="Save" keys="Ctrl+S" onClick={() => void ctx.projects.save()} />
+				<Item label="Save as…" keys="Ctrl+Shift+S" onClick={() => void ctx.projects.save(true)} />
+				<Item label="Close project" onClick={() => void ctx.projects.close()} />
+				<hr />
 				<Item label="Export edits…" disabled={!doc.count.value} onClick={() => void exportEdits()} />
 				<Item label="Import edits…" onClick={() => void chooseImport()} />
 				<Item label="Clear all edits…" disabled={!doc.count.value} onClick={() => {
@@ -146,6 +153,7 @@ function MenuBar({ ctx }: { ctx: EditorContext }) {
 			<Menu label="Help" {...props}>
 				<Item label="Editor controls" keys="F1" onClick={() => (showHelp.value = true)} />
 			</Menu>
+			<div class="ed-project wow-label" title="The project open">{projectTitle.value}</div>
 			<div class="ed-menubar-title wow-title">Ironforge</div>
 			<button class="wow-button ed-exit" onClick={ctx.exit} title="Back to exploring (Tab)">Explore</button>
 			<input ref={file} type="file" accept=".json,application/json" hidden onChange={(e) => {
@@ -258,7 +266,7 @@ function StatusBar({ ctx }: { ctx: EditorContext }) {
 			<span class="wow-muted">{hud?.coordinates}</span>
 			<span>{count ? `${count} selected` : ''}</span>
 			<span class="ed-status-hint wow-muted">{ctx.viewport.hint.value}</span>
-			<span class="wow-muted">{changes ? `${changes} change${changes === 1 ? '' : 's'} · saved in this browser` : 'No changes'}</span>
+			<span class="wow-muted">{[changes ? `${changes} change${changes === 1 ? '' : 's'}` : 'No changes', projectTitle.value.endsWith('*') ? 'not saved yet (Ctrl+S)' : 'saved'].join(' · ')}</span>
 		</footer>
 	);
 }

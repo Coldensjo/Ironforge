@@ -1,4 +1,5 @@
 import type { CascStorage, FileStatus } from '../casc/storage';
+import { isSandbox, sandboxHasTile, sandboxMinimap, sandboxTiles } from './sandbox';
 import { EncryptedError } from '../casc/blte';
 import { parseAdtRoot, tileHeightGrid } from '../formats/adt';
 import { blpInfo, decodeBlp, type Image } from '../formats/blp';
@@ -63,6 +64,12 @@ export class MapExplorer {
 	}
 
 	async loadMap(wdtFdid: number): Promise<MapSummary> {
+		if (isSandbox(wdtFdid)) {
+			// Its tiles have no files; the minimap only needs them listed (with any minimap ID).
+			const tiles = sandboxTiles().map(([x, y]): WdtTile => ({ x, y, flags: 0, flowMap: 0, files: Object.fromEntries(TILE_FILE_KINDS.map((k) => [k, k === 'minimap' ? 1 : 0])) as WdtTile['files'] }));
+			const availability = Object.fromEntries(TILE_FILE_KINDS.map((k) => [k, {}])) as FileAvailability;
+			return { wdtFdid, flags: 0, tileCount: tiles.length, tiles, availability };
+		}
 		const wdt = await this.wdt(wdtFdid);
 		const tiles = wdt.tiles.filter((t): t is WdtTile => t !== null);
 		const availability = Object.fromEntries(TILE_FILE_KINDS.map((k) => [k, {}])) as FileAvailability;
@@ -125,6 +132,7 @@ export class MapExplorer {
 
 	/** Small minimap thumbnails for an overview, decoded from a low mip level. */
 	async minimapThumbnails(wdtFdid: number, coords: [number, number][], size: number): Promise<{ x: number; y: number; image: Image | null }[]> {
+		if (isSandbox(wdtFdid)) return coords.map(([x, y]) => ({ x, y, image: sandboxHasTile(x, y) ? sandboxMinimap(size) : null }));
 		const wdt = await this.wdt(wdtFdid);
 		return Promise.all(coords.map(async ([x, y]) => {
 			const fdid = wdt.tiles[y * 64 + x]?.files.minimap ?? 0;
