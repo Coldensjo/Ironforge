@@ -1,34 +1,77 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
 	<defs>
-		<radialGradient id="sea" cx="42%" cy="36%" r="70%">
-			<stop offset="0" stop-color="#3f8fb0"/>
-			<stop offset="0.6" stop-color="#1c5878"/>
-			<stop offset="1" stop-color="#0c2c44"/>
-		</radialGradient>
 		<linearGradient id="gold" x1="0" y1="0" x2="0" y2="1">
 			<stop offset="0" stop-color="#ffe9a0"/>
 			<stop offset="0.45" stop-color="#e0a93a"/>
 			<stop offset="1" stop-color="#8a5a14"/>
 		</linearGradient>
-		<linearGradient id="land" x1="0" y1="0" x2="0" y2="1">
-			<stop offset="0" stop-color="#9cc45a"/>
-			<stop offset="1" stop-color="#5b8a2e"/>
+		<radialGradient id="forge" cx="50%" cy="78%" r="75%">
+			<stop offset="0" stop-color="#b8471a"/>
+			<stop offset="0.35" stop-color="#5a2412"/>
+			<stop offset="1" stop-color="#1a0f0a"/>
+		</radialGradient>
+		<linearGradient id="steel" x1="0" y1="0" x2="1" y2="1">
+			<stop offset="0" stop-color="#e4eaee"/>
+			<stop offset="0.45" stop-color="#8f9aa4"/>
+			<stop offset="1" stop-color="#454c54"/>
+		</linearGradient>
+		<linearGradient id="horn" x1="0" y1="1" x2="0" y2="0">
+			<stop offset="0" stop-color="#8c7650"/>
+			<stop offset="0.5" stop-color="#d9c79c"/>
+			<stop offset="1" stop-color="#fff6de"/>
+		</linearGradient>
+		<linearGradient id="skin" x1="0" y1="0" x2="0" y2="1">
+			<stop offset="0" stop-color="#f0c29a"/>
+			<stop offset="1" stop-color="#c98a62"/>
+		</linearGradient>
+		<linearGradient id="beard" x1="0" y1="0" x2="0" y2="1">
+			<stop offset="0" stop-color="#e08a3a"/>
+			<stop offset="0.55" stop-color="#b0521e"/>
+			<stop offset="1" stop-color="#6e2c10"/>
 		</linearGradient>
 		<clipPath id="disc"><circle cx="128" cy="128" r="104"/></clipPath>
 	</defs>
-	<!-- Gold rim -->
+
+	<!-- Gold rim, as before -->
 	<circle cx="128" cy="128" r="122" fill="url(#gold)"/>
 	<circle cx="128" cy="128" r="122" fill="none" stroke="#4a2e08" stroke-width="4"/>
 	<circle cx="128" cy="128" r="106" fill="#4a2e08"/>
-	<!-- The sea, with Kalimdor west and the Eastern Kingdoms east -->
+	<circle cx="128" cy="128" r="104" fill="url(#forge)"/>
+
 	<g clip-path="url(#disc)">
-		<circle cx="128" cy="128" r="104" fill="url(#sea)"/>
-		<path d="M76 40c10-4 22 0 26 10s-2 18 4 26 16 10 14 22-12 14-12 26 10 18 6 32-14 18-16 32-4 28-16 30-14-14-14-26 6-22-2-32-18-8-20-22 8-22 6-34-10-16-6-28 10-14 20-18z" fill="url(#land)" stroke="#2f4a16" stroke-width="3"/>
-		<path d="M168 36c12-4 26 2 30 14s-4 18 2 28-2 18-12 20-12 8-8 16 16 10 20 22-2 22 2 34-4 24-16 26-22-4-24-16 6-22 0-32-14-16-10-26 14-10 12-20-10-14-10-26 6-18 14-20z" fill="url(#land)" stroke="#2f4a16" stroke-width="3"/>
-		<path d="M44 196c20 10 64 20 92 18s70-14 88-30" fill="none" stroke="#ffffff" stroke-opacity="0.18" stroke-width="10"/>
+		<!-- Horns, behind the helmet -->
+		<path d="M78 104C58 98 42 84 36 52c12 16 26 24 46 26z" fill="url(#horn)" stroke="#3a2a14" stroke-width="4" stroke-linejoin="round"/>
+		<path d="M178 104c20-6 36-20 42-52-12 16-26 24-46 26z" fill="url(#horn)" stroke="#3a2a14" stroke-width="4" stroke-linejoin="round"/>
+
+		<!-- Beard, under the face: a broad spade with braids -->
+		<path d="M70 124c-4 46 10 86 58 112 48-26 62-66 58-112-8 26-28 42-58 44-30-2-50-18-58-44z" fill="url(#beard)" stroke="#3a160a" stroke-width="4" stroke-linejoin="round"/>
+		<path d="M100 176c-2 18 4 34 14 46M156 176c2 18-4 34-14 46M128 184v42" fill="none" stroke="#5a220c" stroke-width="5" stroke-linecap="round"/>
+		<rect x="106" y="210" width="16" height="9" rx="3" fill="url(#gold)" stroke="#4a2e08" stroke-width="2.5" transform="rotate(-24 114 214)"/>
+		<rect x="134" y="210" width="16" height="9" rx="3" fill="url(#gold)" stroke="#4a2e08" stroke-width="2.5" transform="rotate(24 142 214)"/>
+
+		<!-- Face -->
+		<path d="M84 118h88l-4 38c-10 12-24 18-40 18s-30-6-40-18z" fill="url(#skin)" stroke="#5a3418" stroke-width="3" stroke-linejoin="round"/>
+		<!-- Eyes under bushy brows -->
+		<ellipse cx="108" cy="138" rx="6" ry="5" fill="#1c120c"/>
+		<ellipse cx="148" cy="138" rx="6" ry="5" fill="#1c120c"/>
+		<circle cx="110" cy="136" r="1.8" fill="#fff"/>
+		<circle cx="150" cy="136" r="1.8" fill="#fff"/>
+		<path d="M90 130c8-8 22-10 32-4-10-1-20 2-26 8z" fill="#c4692a" stroke="#3a160a" stroke-width="3" stroke-linejoin="round"/>
+		<path d="M166 130c-8-8-22-10-32-4 10-1 20 2 26 8z" fill="#c4692a" stroke="#3a160a" stroke-width="3" stroke-linejoin="round"/>
+		<!-- A proper dwarven nose -->
+		<path d="M122 132c-2 10-8 16-8 22 0 8 6 11 14 11s14-3 14-11c0-6-6-12-8-22z" fill="#e0a479" stroke="#5a3418" stroke-width="3" stroke-linejoin="round"/>
+		<!-- Moustache, curling out over the beard -->
+		<path d="M128 164c-10-6-26-6-38 4-6 5-14 4-18-2 4 14 20 20 34 14 10-4 16-8 22-8 6 0 12 4 22 8 14 6 30 0 34-14-4 6-12 7-18 2-12-10-28-10-38-4z" fill="#d07a32" stroke="#3a160a" stroke-width="3.5" stroke-linejoin="round"/>
+
+		<!-- Helmet: a steel dome with a gold band and rivets -->
+		<path d="M68 120c0-46 26-74 60-74s60 28 60 74z" fill="url(#steel)" stroke="#1f2327" stroke-width="4" stroke-linejoin="round"/>
+		<path d="M96 60c8-6 18-9 28-10" fill="none" stroke="#ffffff" stroke-opacity="0.55" stroke-width="5" stroke-linecap="round"/>
+		<path d="M128 46v62" stroke="#5c656e" stroke-width="5"/>
+		<rect x="62" y="104" width="132" height="20" rx="5" fill="url(#gold)" stroke="#4a2e08" stroke-width="4"/>
+		<circle cx="80" cy="114" r="3.5" fill="#4a2e08"/>
+		<circle cx="104" cy="114" r="3.5" fill="#4a2e08"/>
+		<circle cx="152" cy="114" r="3.5" fill="#4a2e08"/>
+		<circle cx="176" cy="114" r="3.5" fill="#4a2e08"/>
+		<path d="M118 104h20l-2 22h-16z" fill="url(#steel)" stroke="#1f2327" stroke-width="3" stroke-linejoin="round"/>
 	</g>
-	<!-- A flight path from coast to coast, arriving at a marker -->
-	<path d="M62 176C82 120 132 92 186 104" fill="none" stroke="#fff4d0" stroke-width="7" stroke-linecap="round" stroke-dasharray="2 13"/>
-	<circle cx="186" cy="104" r="14" fill="url(#gold)" stroke="#4a2e08" stroke-width="4"/>
-	<circle cx="186" cy="104" r="5" fill="#4a2e08"/>
 </svg>
