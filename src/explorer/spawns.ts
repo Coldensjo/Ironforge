@@ -35,6 +35,8 @@ export interface SpawnInfo {
 	created?: true;
 	/** Deleted in the editor (kept so it can still be named and restored). */
 	deleted?: true;
+	/** Map models: where the map file placed it (world x, y), to find the tiles that list it once it's moved. */
+	origin?: [number, number];
 	/** Where and how it stands, for the editor; an edited spawn is drawn from this alone. */
 	place: SpawnPlace;
 }

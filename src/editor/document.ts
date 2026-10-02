@@ -221,6 +221,11 @@ export class EditDocument {
 		return [...this.edits].map(([id, edit]) => ({ id, edit, original: this.originals.get(id) ?? null }));
 	}
 
+	/** Ground height changes by tile (map:x_y), as copies, for exports. */
+	terrainEdits(): Record<string, Float32Array> {
+		return Object.fromEntries([...this.terrain].map(([tile, delta]) => [tile, delta.slice()]));
+	}
+
 	/** Remembers a spawn as the data has it, the first time it's picked. */
 	remember(info: SpawnInfo): SpawnInfo {
 		const id = spawnId(info);

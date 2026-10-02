@@ -817,6 +817,7 @@ export class EditorViewport {
 			entry: p.fdid,
 			name: `${building ? 'Building' : 'Model'} ${p.fdid}`,
 			kind: building ? 'Building' : 'Prop',
+			origin: [MAP_ORIGIN - position.z, MAP_ORIGIN - position.x],
 			place: {
 				map: map.mapId,
 				x: MAP_ORIGIN - position.z,

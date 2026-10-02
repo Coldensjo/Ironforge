@@ -35,6 +35,20 @@ export function hashString(name: string, kind: number): number {
 	return seed1;
 }
 
+/** Encrypts 32-bit little-endian words in place, as decrypt undoes (for writing archives). */
+export function encrypt(bytes: Uint8Array, key: number): void {
+	const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+	let k = key >>> 0;
+	let seed = 0xeeeeeeee;
+	for (let o = 0; o + 4 <= bytes.length; o += 4) {
+		seed = (seed + TABLE[0x400 + (k & 0xff)]) >>> 0;
+		const word = view.getUint32(o, true);
+		view.setUint32(o, (word ^ ((k + seed) >>> 0)) >>> 0, true);
+		k = ((((~k << 21) >>> 0) + 0x11111111) >>> 0 | (k >>> 11)) >>> 0;
+		seed = (word + seed + (seed << 5) + 3) >>> 0;
+	}
+}
+
 /** Decrypts 32-bit little-endian words in place (a trailing partial word is left as is). */
 export function decrypt(bytes: Uint8Array, key: number): void {
 	const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);

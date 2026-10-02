@@ -7,6 +7,7 @@ import type { MusicData, WmoArea } from '../explorer/music';
 import type { Place } from '../explorer/places';
 import type { ModelData, ObjectKind, Placement } from '../explorer/objects';
 import type { FarTile, InstanceMap, LoadedTexture, MapListing, NearTile, TemplateListing, TileTexture } from '../explorer/world';
+import type { MapPatch, ModelEdit } from '../explorer/mapExport';
 import type { SpawnInfo } from '../explorer/spawns';
 import type { Image } from '../formats/blp';
 
@@ -50,6 +51,8 @@ export interface StorageApi {
 	listTemplates(): TemplateListing;
 	/** A new spawn of a template on a map (positioned at the origin). */
 	templateSpawn(type: 'npc' | 'object', entry: number, mapId: number, guid: number): SpawnInfo | null;
+	/** The editor's map changes (map model edits, ground height changes by map:x_y) as a client patch. */
+	exportMapPatch(models: ModelEdit[], terrain: Record<string, Float32Array>): MapPatch;
 }
 
 export type AsyncStorageApi = {

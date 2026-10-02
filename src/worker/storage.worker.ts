@@ -122,6 +122,9 @@ const api: AsyncStorageApi = {
 	async templateSpawn(type, entry, mapId, guid) {
 		return requireWorld().templateSpawn(type, entry, mapId, guid);
 	},
+	async exportMapPatch(models, terrain) {
+		return requireWorld().exportMapPatch(models, terrain);
+	},
 };
 
 /** Collects typed-array buffers in a result so they move to the main thread instead of being copied. */

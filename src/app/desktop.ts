@@ -29,3 +29,24 @@ export async function saveTextFile(name: string, text: string, type = 'applicati
 	setTimeout(() => URL.revokeObjectURL(link.href), 1000);
 	return true;
 }
+
+/** Where the map export goes in the game folder (served under __wow/; see electron/wowInstall.ts). */
+const PATCH_URL = '__wow/Data/patch-3.MPQ';
+
+/**
+ * Puts the map export into the game's Data folder, where the page is served with the game (the
+ * desktop app, the dev server); otherwise saves it as a download to put there by hand.
+ */
+export async function installPatch(archive: Uint8Array): Promise<{ written: true; path: string } | { written: false; reason: string | null }> {
+	const body = new Blob([archive as Uint8Array<ArrayBuffer>], { type: 'application/octet-stream' });
+	const response = await fetch(new URL(PATCH_URL, location.href), { method: 'PUT', body }).catch(() => null);
+	if (response?.ok) return { written: true, path: await response.text() };
+	// Refused (another patch is there): say why rather than download.
+	if (response?.status === 409) return { written: false, reason: await response.text() };
+	const link = document.createElement('a');
+	link.href = URL.createObjectURL(body);
+	link.download = 'patch-3.MPQ';
+	link.click();
+	setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+	return { written: false, reason: null };
+}

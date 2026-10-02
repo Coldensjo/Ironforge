@@ -4,7 +4,7 @@
 // registry and the usual folders on Windows, and in the Wine prefixes of Lutris, Bottles, Steam
 // (Proton) and Heroic on Linux.
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 
@@ -153,4 +153,24 @@ export function byteRange(header: string | null | undefined, size: number): [num
 	const start = Number(range[1]);
 	const end = range[2] ? Math.min(Number(range[2]), size - 1) : size - 1;
 	return start >= size || start > end ? 'bad' : [start, end];
+}
+
+/** Where Ironforge's map export goes in the original (1.12) client: loaded after the game's own patches. */
+export const PATCH_PATH = 'Data/patch-3.MPQ';
+/** The text every archive Ironforge writes carries (src/mpq/writer.ts IRONFORGE_MARKER_TEXT; a test keeps them the same). */
+export const PATCH_MARKER_TEXT = 'Ironforge map export: this patch was written by Ironforge and is replaced by its next export.';
+
+const hasMarker = (bytes: Uint8Array) => Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).includes(PATCH_MARKER_TEXT, 0, 'latin1');
+
+/**
+ * Puts Ironforge's map export into the install's Data folder. Only an archive Ironforge wrote
+ * goes in, and only in place of one it wrote before: a patch of the game's or a server's stays.
+ */
+export function writePatch(root: string, bytes: Uint8Array): { ok: true; path: string } | { ok: false; reason: string } {
+	if (!existsSync(join(root, 'Data', 'dbc.MPQ')) && !existsSync(join(root, 'Data', 'terrain.MPQ'))) return { ok: false, reason: 'The game folder is not the original (1.12) client' };
+	if (!hasMarker(bytes)) return { ok: false, reason: 'Not an archive Ironforge wrote' };
+	const path = join(root, ...PATCH_PATH.split('/'));
+	if (existsSync(path) && !hasMarker(readFileSync(path))) return { ok: false, reason: `${PATCH_PATH} is there already and isn't Ironforge's; move it aside first` };
+	writeFileSync(path, bytes);
+	return { ok: true, path };
 }

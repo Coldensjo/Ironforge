@@ -7,7 +7,7 @@ import { createReadStream, existsSync, readFileSync, statSync, writeFileSync } f
 import { basename, dirname, extname, join, resolve, sep } from 'node:path';
 import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
-import { byteRange, findWow, installRoot, wowRequest } from './wowInstall.js';
+import { byteRange, findWow, installRoot, PATCH_PATH, wowRequest, writePatch } from './wowInstall.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 /** The built page (vite build), beside this compiled file's folder. */
@@ -78,7 +78,13 @@ function notFound(): Response {
 }
 
 /** A file of the install, or a folder's listing, with byte ranges as the storage reader asks for them. */
-function serveWow(relative: string, request: Request): Response {
+async function serveWow(relative: string, request: Request): Promise<Response> {
+	// The editor's map export, put into the game's Data folder.
+	if (request.method === 'PUT') {
+		if (!wowRoot || relative !== PATCH_PATH) return new Response(null, { status: 405 });
+		const written = writePatch(wowRoot, new Uint8Array(await request.arrayBuffer()));
+		return new Response(written.ok ? written.path : written.reason, { status: written.ok ? 200 : 409, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+	}
 	const found = wowRoot ? wowRequest(wowRoot, relative) : null;
 	if (!found) return notFound();
 	if (found.kind === 'list') return new Response(found.names.join('\n'), { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });

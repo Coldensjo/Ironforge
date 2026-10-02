@@ -1,5 +1,6 @@
 import type { FileSource } from '../casc/source';
 import { MpqArchive } from './archive';
+import { IRONFORGE_MARKER } from './writer';
 
 /**
  * A vanilla client's game files: every MPQ in its Data folder, later ones overriding earlier
@@ -15,7 +16,9 @@ export class MpqStorage {
 		const names = (await source.listDir(['Data'])).filter((n) => /\.mpq$/i.test(n));
 		if (!names.length) throw new Error('No MPQ archives in Data: is this the World of Warcraft folder?');
 		const archives = await Promise.all(loadOrder(names).map(async (name) => ({ name, archive: await MpqArchive.open(await source.openFile(['Data', name])) })));
-		return new MpqStorage(archives);
+		// Ironforge's own map exports are the editor's changes made into files: the editor reads
+		// the world without them, and applies its changes itself.
+		return new MpqStorage(archives.filter((a) => !a.archive.has(IRONFORGE_MARKER)));
 	}
 
 	/** A file by its path (case doesn't matter; / or \), from the highest archive that has it; null if none does. */

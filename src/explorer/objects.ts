@@ -124,7 +124,7 @@ export interface ModelAnimation {
 }
 
 /** ADT placement rotation (degrees) to a matrix: models are z-up; the world here is y-up. */
-function placementMatrix(x: number, y: number, z: number, rx: number, ry: number, rz: number, scale: number): Mat4 {
+export function placementMatrix(x: number, y: number, z: number, rx: number, ry: number, rz: number, scale: number): Mat4 {
 	return compose(translation(x, y, z), rotationY(ry - 90), rotationZ(-rx), rotationX(rz - 90), scaling(scale));
 }
 

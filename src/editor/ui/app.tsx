@@ -3,7 +3,7 @@ import type { ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { ViewSettings } from '../../viewer/viewer';
 import type { Tool } from '../viewport';
-import { desktop, saveTextFile } from '../../app/desktop';
+import { desktop, installPatch, saveTextFile } from '../../app/desktop';
 import { projectTitle } from '../../app/projects';
 import { exportSql } from '../sqlExport';
 import { Check, Slot } from './common';
@@ -106,6 +106,34 @@ function MenuBar({ ctx }: { ctx: EditorContext }) {
 		const left = result.skipped.length ? `; ${result.skipped.length} left out (listed at the top of the file)` : '';
 		ctx.notify(`Exported ${result.added} added, ${result.changed} changed, ${result.deleted} deleted${left}`);
 	};
+	/** Ground and map model edits as a patch for the 1.12 client, put into its Data folder. */
+	const exportMap = async () => {
+		const models = doc.entries().filter((e) => /^\d+:(m2|wmo):/.test(e.id));
+		const terrain = doc.terrainEdits();
+		if (!models.length && !Object.keys(terrain).length) {
+			ctx.notify('No ground or map model edits to export (NPCs and objects go through the SQL export)');
+			return;
+		}
+		ctx.notify('Making the map patch…');
+		let patch;
+		try {
+			patch = await ctx.storage.exportMapPatch(models, terrain);
+		} catch (e) {
+			ctx.notify(`Could not export the map: ${(e as Error).message}`);
+			return;
+		}
+		if (patch.skipped.length) console.warn(`Map export left out:\n${patch.skipped.join('\n')}`);
+		const left = patch.skipped.length ? ` (${patch.skipped.length} left out: see the console)` : '';
+		if (!patch.tiles.length) {
+			ctx.notify(`Nothing to export${left}`);
+			return;
+		}
+		const result = await installPatch(patch.archive);
+		const tiles = `${patch.tiles.length} tile${patch.tiles.length === 1 ? '' : 's'}`;
+		if (result.written) ctx.notify(`Map patch with ${tiles} put in the game${left}. Run update-maps.bat for the server, then log in.`);
+		else if (result.reason) ctx.notify(`Map patch not written: ${result.reason}`);
+		else ctx.notify(`Saved patch-3.MPQ with ${tiles}${left}: put it in the game's Data folder`);
+	};
 	const importText = (text: string) => {
 		try {
 			ctx.notify(`Imported ${doc.importJson(text)} changes`);
@@ -135,6 +163,7 @@ function MenuBar({ ctx }: { ctx: EditorContext }) {
 				<Item label="Export edits…" disabled={!doc.count.value} onClick={() => void exportEdits()} />
 				<Item label="Import edits…" onClick={() => void chooseImport()} />
 				<Item label="Export for server (SQL)…" disabled={!doc.count.value} onClick={() => void exportServer()} />
+				<Item label="Export map to game…" disabled={!doc.count.value} onClick={() => void exportMap()} />
 				<Item label="Clear all edits…" disabled={!doc.count.value} onClick={() => {
 					if (confirm('Put every NPC and object back as the spawn data has it? This removes all your changes and everything you placed.')) doc.clearAll();
 				}} />

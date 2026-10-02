@@ -14,6 +14,7 @@ import type { KnownMap } from './maps';
 import { parseVanillaAdt, vanillaModelNames } from '../formats/vanilla';
 import { liquidKind } from '../formats/mh2o';
 import { VanillaStorage } from '../mpq/vanillaStorage';
+import { buildMapPatch, type MapPatch, type ModelEdit } from './mapExport';
 import { globalWmoPlacement, globalWmoTiles, loadM2, loadWmo, parsePlacements, type ModelData, type ObjectKind, type Placement } from './objects';
 import { GroundEffects, type ClutterSource } from './groundEffects';
 import { PortalSource } from './portals';
@@ -173,6 +174,21 @@ export class WorldLoader {
 			wmoTiles: g ? globalWmoTiles(g) : [],
 			wmoBounds: g ? { min: [g.position[0] + g.min[0], g.min[1], g.position[2] + g.min[2]], max: [g.position[0] + g.max[0], g.max[1], g.position[2] + g.max[2]] } : null,
 		};
+	}
+
+	/** A map's WDT, by Map.db2 ID: the continents', or the map table's; null for none. */
+	private async wdtOfMap(mapId: number): Promise<number | null> {
+		const known = this.maps.knownMaps().find((m) => m.mapId === mapId);
+		if (known) return known.wdt;
+		const table = await loadTable(this.storage, DB2_FILES.Map);
+		return table.getInt(mapId, MAP_WDT) || null;
+	}
+
+	/** The editor's map changes as a patch archive for the original (1.12) client. */
+	async exportMapPatch(models: ModelEdit[], terrain: Record<string, Float32Array>): Promise<MapPatch> {
+		const storage = this.storage;
+		if (!(storage instanceof VanillaStorage)) throw new Error('Map changes can only be made into files for the original (1.12) client');
+		return buildMapPatch(storage, this.maps, (id) => this.wdtOfMap(id), models, terrain);
 	}
 
 	/** Every map the install has files for, by Map.db2 instance type. */
