@@ -3,3 +3,5 @@ dist/
 release/
 out/
 .cache/
+dist-electron/
+release-desktop/

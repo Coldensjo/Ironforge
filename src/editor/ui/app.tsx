@@ -3,6 +3,7 @@ import type { ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import type { ViewSettings } from '../../viewer/viewer';
 import type { Tool } from '../viewport';
+import { desktop, saveTextFile } from '../../app/desktop';
 import { Check, Slot } from './common';
 import type { EditorContext } from './context';
 import { Inspector, Outliner } from './inspector';
@@ -89,27 +90,31 @@ function MenuBar({ ctx }: { ctx: EditorContext }) {
 		};
 	}, [open]);
 
-	const exportEdits = () => {
-		const link = document.createElement('a');
-		link.href = URL.createObjectURL(new Blob([doc.exportJson()], { type: 'application/json' }));
-		link.download = 'mapexplorer-edits.json';
-		link.click();
-		setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+	const exportEdits = async () => {
+		if (await saveTextFile('ironforge-edits.json', doc.exportJson())) ctx.notify('Edits saved');
 	};
-	const importEdits = async (chosen: File | undefined) => {
-		if (!chosen) return;
+	const importText = (text: string) => {
 		try {
-			ctx.notify(`Imported ${doc.importJson(await chosen.text())} changes`);
+			ctx.notify(`Imported ${doc.importJson(text)} changes`);
 		} catch (e) {
 			ctx.notify(`Could not import: ${(e as Error).message}`);
 		}
+	};
+	const importEdits = async (chosen: File | undefined) => {
+		if (chosen) importText(await chosen.text());
+	};
+	/** The desktop app's open dialog, or the browser's file picker. */
+	const chooseImport = async () => {
+		if (!desktop) return file.current?.click();
+		const opened = await desktop.openText();
+		if (opened) importText(opened.text);
 	};
 	const props = { open, setOpen };
 	return (
 		<nav class="ed-menubar wow-panel" ref={bar}>
 			<Menu label="File" {...props}>
-				<Item label="Export edits…" disabled={!doc.count.value} onClick={exportEdits} />
-				<Item label="Import edits…" onClick={() => file.current?.click()} />
+				<Item label="Export edits…" disabled={!doc.count.value} onClick={() => void exportEdits()} />
+				<Item label="Import edits…" onClick={() => void chooseImport()} />
 				<Item label="Clear all edits…" disabled={!doc.count.value} onClick={() => {
 					if (confirm('Put every NPC and object back as the spawn data has it? This removes all your changes and everything you placed.')) doc.clearAll();
 				}} />

@@ -178,6 +178,19 @@ The camera position is kept in the URL, so a link brings you back to the same sp
 
 ## For developers
 
+### Desktop app
+
+Ironforge also runs as a desktop app (Electron), which finds the game by itself and saves and opens files with the usual Windows dialogs:
+
+```sh
+npm run desktop       # build and run it
+npm run desktop:dev   # the dev server in the app's window, reloading as you edit
+npm run desktop:pack  # Ironforge Setup <version>.exe and a portable .exe, in release-desktop/
+```
+
+The app (`electron/main.ts`) serves the page and the game install from `app://ironforge/`, the install under `__wow/` as the dev server does, so the page reads it the same way; `electron/preload.cts` gives the page its folder and file dialogs (`src/app/desktop.ts`). It keeps its own saved edits, apart from the browser's.
+
+
 ### Spawn data
 
 Creature and object spawns, patrols and dungeon entrances in `public/spawns` come from the [VMaNGOS](https://github.com/vmangos/core) world database. To rebuild them, download the SQLite database from the VMaNGOS `db_latest` release and run:
@@ -201,6 +214,7 @@ npm run models -- [wowDir] [product]
 - `npm run typecheck`: type-check only
 - `npm run probe`: inspect game data from Node
 - `npm run spawns`: rebuild the spawn files
+- `npm run desktop`, `desktop:dev`, `desktop:pack`: the desktop app (see above)
 - `npm run models`: rebuild the editor's palette of map models
 - `npm run portable`: build the portable version into `release/` (the zip for a GitHub release);
   needs mingw-w64 (gcc, windres), ImageMagick and 7-Zip on the PATH. The launcher is

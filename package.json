@@ -10,20 +10,52 @@
 		"probe": "tsx tools/probe.ts",
 		"spawns": "tsx tools/buildSpawns.ts",
 		"models": "tsx tools/buildModels.ts",
-		"portable": "tsx tools/buildPortable.ts"
+		"portable": "tsx tools/buildPortable.ts",
+		"desktop:compile": "tsc -p electron/tsconfig.json",
+		"desktop": "npm run build && npm run desktop:compile && electron .",
+		"desktop:dev": "npm run desktop:compile && tsx tools/desktopDev.ts",
+		"desktop:pack": "npm run build && npm run desktop:compile && electron-builder --win"
 	},
-	"dependencies": {
+	"devDependencies": {
 		"@preact/signals": "^2.11.3",
+		"@types/node": "^26.6.3",
+		"@types/three": "^0.186.0",
+		"electron": "^44.5.1",
+		"electron-builder": "^26.15.3",
 		"fflate": "^0.8.3",
 		"preact": "^11.0.0",
 		"three": "^0.186.1",
-		"three-mesh-bvh": "^0.9.15"
-	},
-	"devDependencies": {
-		"@types/node": "^26.6.3",
-		"@types/three": "^0.186.0",
+		"three-mesh-bvh": "^0.9.15",
 		"tsx": "^4.23.15",
 		"typescript": "^7.0.2",
 		"vite": "^8.3.1"
+	},
+	"description": "A World of Warcraft Classic world editor that reads your own game install",
+	"main": "dist-electron/main.js",
+	"build": {
+		"appId": "com.coldensjo.ironforge",
+		"productName": "Ironforge",
+		"directories": {
+			"output": "release-desktop"
+		},
+		"files": [
+			"dist/**",
+			"dist-electron/**",
+			"package.json"
+		],
+		"win": {
+			"target": [
+				"nsis",
+				"portable"
+			],
+			"icon": "public/icon.png"
+		},
+		"nsis": {
+			"oneClick": false,
+			"allowToChangeInstallationDirectory": true
+		},
+		"portable": {
+			"artifactName": "Ironforge-${version}-portable.exe"
+		}
 	}
 }

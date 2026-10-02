@@ -9,6 +9,7 @@ import { matchScore, searchKey } from '../app/search';
 import { Minimap } from './minimap';
 import { isTyping } from './typing';
 import { signal } from '@preact/signals';
+import { desktop } from '../app/desktop';
 import { bindKeys, workspace } from '../app/input';
 import { EditDocument } from '../editor/document';
 import { mountEditor } from '../editor/index';
@@ -145,7 +146,13 @@ start.addEventListener('drop', async (e) => {
 // After "Upload", the browser lists the whole folder before telling the page anything; show
 // the bar as soon as the dialog closes (the page gets focus back), and drop it if it was cancelled.
 let choosingFolder = false;
-$('pick').addEventListener('click', () => {
+$('pick').addEventListener('click', async () => {
+	// The desktop app has a real folder dialog, and then serves the folder like a found install.
+	if (desktop) {
+		if (await desktop.chooseWowFolder()) await findWow();
+		else setStatus('That isn\'t the World of Warcraft folder. Choose the folder that contains _classic_ or _classic_beta_.', true);
+		return;
+	}
 	choosingFolder = true;
 	$<HTMLInputElement>('pick-input').click();
 });
@@ -167,7 +174,7 @@ $<HTMLInputElement>('pick-input').addEventListener('change', async (event) => {
 	await useSource(source);
 });
 
-if (!hasDirectoryPicker) $('pick-direct').hidden = true;
+if (!hasDirectoryPicker || desktop) $('pick-direct').hidden = true;
 $('pick-direct').addEventListener('click', async () => {
 	try {
 		const init = await pickDirectory();
