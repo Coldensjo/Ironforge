@@ -141,7 +141,7 @@ function MenuBar({ ctx }: { ctx: EditorContext }) {
 			<Menu label="Help" {...props}>
 				<Item label="Editor controls" keys="F1" onClick={() => (showHelp.value = true)} />
 			</Menu>
-			<div class="ed-menubar-title wow-title">World Editor</div>
+			<div class="ed-menubar-title wow-title">Ironforge</div>
 			<button class="wow-button ed-exit" onClick={ctx.exit} title="Back to exploring (Tab)">Explore</button>
 			<input ref={file} type="file" accept=".json,application/json" hidden onChange={(e) => {
 				const input = e.target as HTMLInputElement;
