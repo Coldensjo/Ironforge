@@ -1,4 +1,6 @@
-# MapExplorer
+# WorldEditor
+
+A world editor for World of Warcraft Classic: move, place, pose and delete NPCs, objects, props and buildings, and shape the ground, in an editor drawn with the game's own interface. It grew out of [MapExplorer](https://github.com/Coldensjo/ClassicWowMapExplorer), whose explorer it still includes (Tab switches between the two), and like it reads everything from your own game install.
 
 Fly over the World of Warcraft world, drawn from your own game install. Everything is read straight from the game files on your computer; nothing is hosted, uploaded or downloaded.
 
