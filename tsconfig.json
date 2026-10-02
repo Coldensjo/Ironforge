@@ -11,8 +11,9 @@
 		"isolatedModules": true,
 		"noUnusedLocals": true,
 		"noFallthroughCasesInSwitch": false,
+		"allowImportingTsExtensions": true,
 		"jsx": "react-jsx",
 		"jsxImportSource": "preact"
 	},
-	"include": ["src", "tools", "electron"]
+	"include": ["src", "tools", "electron", "test"]
 }

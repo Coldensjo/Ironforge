@@ -14,7 +14,8 @@
 		"desktop:compile": "tsc -p electron/tsconfig.json",
 		"desktop": "npm run build && npm run desktop:compile && electron .",
 		"desktop:dev": "npm run desktop:compile && tsx tools/desktopDev.ts",
-		"desktop:pack": "npm run build && npm run desktop:compile && electron-builder --win"
+		"desktop:pack": "npm run build && npm run desktop:compile && electron-builder --win",
+		"test": "vitest run"
 	},
 	"devDependencies": {
 		"@preact/signals": "^2.11.3",
@@ -28,7 +29,8 @@
 		"three-mesh-bvh": "^0.9.15",
 		"tsx": "^4.23.15",
 		"typescript": "^7.0.2",
-		"vite": "^8.3.1"
+		"vite": "^8.3.1",
+		"vitest": "^5.0.3"
 	},
 	"description": "A World of Warcraft Classic world editor that reads your own game install",
 	"main": "dist-electron/main.js",

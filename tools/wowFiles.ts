@@ -3,7 +3,7 @@
 // folder. See electron/wowInstall.ts for how it's found.
 import { createReadStream } from 'node:fs';
 import type { Plugin } from 'vite';
-import { byteRange, findWow, wowRequest } from '../electron/wowInstall';
+import { byteRange, findWow, wowRequest } from '../electron/wowInstall.ts';
 
 const PREFIX = '/__wow/';
 

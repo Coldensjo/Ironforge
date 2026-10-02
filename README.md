@@ -214,6 +214,7 @@ npm run models -- [wowDir] [product]
 - `npm run dev`: start the dev server
 - `npm run build`: type-check and build to `dist`
 - `npm run typecheck`: type-check only
+- `npm test`: the tests (Vitest); some read real files where they're installed and skip otherwise
 - `npm run probe`: inspect game data from Node
 - `npm run spawns`: rebuild the spawn files
 - `npm run desktop`, `desktop:dev`, `desktop:pack`: the desktop app (see above)
