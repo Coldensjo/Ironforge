@@ -122,7 +122,9 @@ ipcMain.handle('wow:choose', async (event) => {
 
 ipcMain.handle('file:save', async (event, name: string, text: string) => {
 	const window = BrowserWindow.fromWebContents(event.sender);
-	const options: Electron.SaveDialogOptions = { title: 'Save', defaultPath: name, filters: [{ name: 'Ironforge edits', extensions: ['json'] }] };
+	// The file kind follows the name: edits (.json) or SQL for a server (.sql).
+	const filter = name.toLowerCase().endsWith('.sql') ? { name: 'SQL for the server', extensions: ['sql'] } : { name: 'Ironforge edits', extensions: ['json'] };
+	const options: Electron.SaveDialogOptions = { title: 'Save', defaultPath: name, filters: [filter] };
 	const result = window ? await dialog.showSaveDialog(window, options) : await dialog.showSaveDialog(options);
 	if (result.canceled || !result.filePath) return null;
 	writeFileSync(result.filePath, text);

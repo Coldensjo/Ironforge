@@ -5,6 +5,7 @@ import type { ViewSettings } from '../../viewer/viewer';
 import type { Tool } from '../viewport';
 import { desktop, saveTextFile } from '../../app/desktop';
 import { projectTitle } from '../../app/projects';
+import { exportSql } from '../sqlExport';
 import { Check, Slot } from './common';
 import type { EditorContext } from './context';
 import { Inspector, Outliner } from './inspector';
@@ -94,6 +95,17 @@ function MenuBar({ ctx }: { ctx: EditorContext }) {
 	const exportEdits = async () => {
 		if (await saveTextFile('ironforge-edits.json', doc.exportJson())) ctx.notify('Edits saved');
 	};
+	/** Spawn edits as SQL for a VMaNGOS world database. */
+	const exportServer = async () => {
+		const result = exportSql(doc.entries());
+		if (!result.added && !result.changed && !result.deleted) {
+			ctx.notify(result.skipped.length ? 'Nothing the server can take: map models and terrain need the map export' : 'No NPC or object edits to export');
+			return;
+		}
+		if (!(await saveTextFile('ironforge-spawns.sql', result.sql, 'application/sql'))) return;
+		const left = result.skipped.length ? `; ${result.skipped.length} left out (listed at the top of the file)` : '';
+		ctx.notify(`Exported ${result.added} added, ${result.changed} changed, ${result.deleted} deleted${left}`);
+	};
 	const importText = (text: string) => {
 		try {
 			ctx.notify(`Imported ${doc.importJson(text)} changes`);
@@ -122,6 +134,7 @@ function MenuBar({ ctx }: { ctx: EditorContext }) {
 				<hr />
 				<Item label="Export edits…" disabled={!doc.count.value} onClick={() => void exportEdits()} />
 				<Item label="Import edits…" onClick={() => void chooseImport()} />
+				<Item label="Export for server (SQL)…" disabled={!doc.count.value} onClick={() => void exportServer()} />
 				<Item label="Clear all edits…" disabled={!doc.count.value} onClick={() => {
 					if (confirm('Put every NPC and object back as the spawn data has it? This removes all your changes and everything you placed.')) doc.clearAll();
 				}} />

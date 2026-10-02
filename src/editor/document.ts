@@ -216,6 +216,11 @@ export class EditDocument {
 		}));
 	}
 
+	/** Every edit with its spawn as the data has it (null when added, or not seen since loading), for exports. */
+	entries(): { id: string; edit: SpawnEdit; original: SpawnInfo | null }[] {
+		return [...this.edits].map(([id, edit]) => ({ id, edit, original: this.originals.get(id) ?? null }));
+	}
+
 	/** Remembers a spawn as the data has it, the first time it's picked. */
 	remember(info: SpawnInfo): SpawnInfo {
 		const id = spawnId(info);
