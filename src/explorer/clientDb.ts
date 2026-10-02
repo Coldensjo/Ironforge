@@ -1,6 +1,8 @@
 import type { GameStorage } from '../casc/storage';
 import { Db2 } from '../formats/db2';
 import type { LiquidKind } from '../formats/mh2o';
+import { vanillaTable } from '../mpq/vanillaTables';
+import { VanillaStorage } from '../mpq/vanillaStorage';
 
 /** File IDs of client database tables (DBFilesClient/*.db2); they're unnamed in the root. */
 export const DB2_FILES = {
@@ -23,10 +25,30 @@ export const DB2_FILES = {
 	ZoneMusic: 1310254,
 } as const;
 
-const tables = new WeakMap<GameStorage, Map<number, Promise<Db2>>>();
+/**
+ * A client table as the engine reads one: rows by ID, fields by index, some fields arrays. The
+ * modern client's DB2 files are read as they are; the original client's DBC files are made to
+ * look like them here.
+ */
+export interface Table {
+	readonly fieldCount: number;
+	ids(): number[];
+	has(id: number): boolean;
+	arrayLength(field: number): number;
+	getInt(id: number, field: number, arrayIndex?: number): number | null;
+	getFloat(id: number, field: number, arrayIndex?: number): number | null;
+	getString(id: number, field: number, arrayIndex?: number): string | null;
+	/** DB2 relationship fields; the original client's tables have none. */
+	getParent(id: number): number | null;
+}
 
-/** Loads a table once per storage. Encrypted sections are skipped rather than failing. */
-export function loadTable(storage: GameStorage, fdid: number): Promise<Db2> {
+const tables = new WeakMap<GameStorage, Map<number, Promise<Table>>>();
+
+/**
+ * Loads a table once per storage. Encrypted sections are skipped rather than failing. The
+ * original client's tables are read from its DBC files, in the modern ones' shape.
+ */
+export function loadTable(storage: GameStorage, fdid: number): Promise<Table> {
 	let cache = tables.get(storage);
 	if (!cache) {
 		cache = new Map();
@@ -34,7 +56,9 @@ export function loadTable(storage: GameStorage, fdid: number): Promise<Db2> {
 	}
 	let table = cache.get(fdid);
 	if (!table) {
-		table = storage.readFileWithStatus(fdid, true).then(({ data }) => new Db2(data));
+		const name = Object.entries(DB2_FILES).find(([, id]) => id === fdid)?.[0];
+		const vanilla = storage instanceof VanillaStorage && name ? vanillaTable(storage, name) : null;
+		table = vanilla ?? storage.readFileWithStatus(fdid, true).then(({ data }): Table => new Db2(data));
 		cache.set(fdid, table);
 	}
 	return table;
@@ -125,7 +149,7 @@ export async function lockKinds(storage: GameStorage): Promise<Record<number, Lo
 
 /** Classifies liquid types by name ("Ocean", "Magma", "PBRWater - Generic - Lake", ...). */
 export async function liquidKinds(storage: GameStorage): Promise<(type: number) => LiquidKind> {
-	let table: Db2 | null = null;
+	let table: Table | null = null;
 	try {
 		table = await loadTable(storage, DB2_FILES.LiquidType);
 	} catch (e) {

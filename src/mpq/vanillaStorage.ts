@@ -1,5 +1,6 @@
 import type { BlteResult } from '../casc/blte';
 import type { FileStatus, GameStorage } from '../casc/storage';
+import { KNOWN_FILE_PATHS } from './knownFiles';
 import type { MpqStorage } from './storage';
 
 /**
@@ -30,9 +31,9 @@ export class VanillaStorage implements GameStorage {
 		return id;
 	}
 
-	/** The path a number stands for, if it's one of these. */
+	/** The path a number stands for: one of these, or a modern file number the app uses for interface art. */
 	pathOf(id: number): string | undefined {
-		return id >= VANILLA_ID_BASE ? this.paths[id - VANILLA_ID_BASE] : undefined;
+		return id >= VANILLA_ID_BASE ? this.paths[id - VANILLA_ID_BASE] : KNOWN_FILE_PATHS[id];
 	}
 
 	lookupPath(path: string): number | null {

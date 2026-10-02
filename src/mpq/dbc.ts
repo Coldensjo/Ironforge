@@ -47,6 +47,16 @@ export class Dbc {
 		return o === null ? null : this.view.getFloat32(o, true);
 	}
 
+	/** Every record's index in the file, for the few tables whose first field isn't an ID. */
+	rows(): number[] {
+		return Array.from({ length: this.recordCount }, (_, r) => r);
+	}
+
+	/** A field of a record, by the record's index in the file. */
+	rowInt(row: number, field: number): number {
+		return this.view.getInt32(20 + row * this.recordSize + field * 4, true);
+	}
+
 	/** A string field: an offset into the string block, read up to its terminating zero. */
 	getString(id: number, field: number): string | null {
 		const o = this.offset(id, field);

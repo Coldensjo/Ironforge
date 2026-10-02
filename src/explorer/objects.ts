@@ -7,6 +7,7 @@ import {
 	animationFile, animationIds, attachmentPoints, findSequence, loopAnimation, poseAt, skinVertex, standAnimation, standPose,
 	type AnimationClip, type AttachmentPoint, type BoneAnimation, type Sequence,
 } from '../formats/m2Pose';
+import { vanillaAnimationLayout } from '../formats/m2Vanilla';
 import { parseParticleEmitters, type ParticleEmitter } from '../formats/m2Particles';
 import {
 	parseWmoGroup, parseWmoRoot, WMO_GROUP_INTERIOR, WMO_LIQUID_CELL, type WmoGroup, visibleWmoGroups, WMO_MATERIAL_TWO_SIDED, WMO_MATERIAL_UNFOGGED, WMO_MATERIAL_UNLIT,
@@ -298,11 +299,8 @@ function prepareM2(storage: GameStorage, fdid: number, stand: boolean, file?: Ui
 		return entry;
 	}
 	entry = (async () => {
-		if (storage instanceof VanillaStorage) return prepareVanillaM2(storage, file ?? await storage.readFile(fdid));
 		// The whole file is only needed here, for the vertices and the pose; it isn't cached.
-		const { bytes, vertices, ...m2 } = parseM2(file ?? await storage.readFile(fdid));
-		if (!m2.skinFdids[0]) throw new Error(`M2 ${fdid} has no skin`);
-		const skin = parseSkin(await storage.readFile(m2.skinFdids[0]));
+		const { bytes, vertices, m2, skin } = await readM2(storage, fdid, file);
 
 		const n = skin.vertexLookup.length;
 		const positions = new Float32Array(n * 3);
@@ -354,28 +352,20 @@ function prepareM2(storage: GameStorage, fdid: number, stand: boolean, file?: Ui
 	return entry;
 }
 
-/** An original-client (1.12) model, in its bind pose: its animation and particles aren't read yet. */
-function prepareVanillaM2(storage: VanillaStorage, file: Uint8Array): PreparedM2 {
-	const { m2: { bytes, vertices, ...m2 }, skin } = parseVanillaM2(file, (path) => storage.idOf(path));
-	const n = skin.vertexLookup.length;
-	const positions = new Float32Array(n * 3);
-	const normals = new Float32Array(n * 3);
-	const uvs = new Float32Array(n * 2);
-	const v = new DataView(vertices.buffer, vertices.byteOffset, vertices.byteLength);
-	for (let i = 0; i < n; i++) {
-		const o = skin.vertexLookup[i] * 48;
-		if (o + 48 > vertices.length) continue;
-		for (let k = 0; k < 3; k++) {
-			positions[i * 3 + k] = v.getFloat32(o + k * 4, true);
-			normals[i * 3 + k] = v.getFloat32(o + 20 + k * 4, true);
-		}
-		uvs[i * 2] = v.getFloat32(o + 32, true);
-		uvs[i * 2 + 1] = v.getFloat32(o + 36, true);
+/**
+ * A model's mesh, its skin, and its bytes for posing (an M2 with its header at m2.md20). The
+ * original client's models hold their skins, and are posed from their animation rebuilt in the
+ * later layout (see m2Vanilla.ts).
+ */
+async function readM2(storage: GameStorage, fdid: number, file?: Uint8Array): Promise<{ bytes: Uint8Array; vertices: Uint8Array; m2: PreparedM2['m2']; skin: M2Skin }> {
+	const source = file ?? await storage.readFile(fdid);
+	if (storage instanceof VanillaStorage) {
+		const { m2: { bytes: _, vertices, ...m2 }, skin } = parseVanillaM2(source, (path) => storage.idOf(path));
+		return { bytes: vanillaAnimationLayout(source), vertices, m2: { ...m2, md20: 0 }, skin };
 	}
-	return {
-		m2, skin, positions, normals, uvs, indices: Uint32Array.from(skin.indices),
-		attachments: new Map(), animation: null, boneIndex: null, boneWeight: null, emitters: [], animations: undefined,
-	};
+	const { bytes, vertices, ...m2 } = parseM2(source);
+	if (!m2.skinFdids[0]) throw new Error(`M2 ${fdid} has no skin`);
+	return { bytes, vertices, m2, skin: parseSkin(await storage.readFile(m2.skinFdids[0])) };
 }
 
 /** Picks the batches a look shows (geosets, resolved runtime textures), as a standalone mesh. */

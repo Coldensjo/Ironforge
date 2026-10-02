@@ -1,7 +1,8 @@
 import type { GameStorage } from '../casc/storage';
 import { TILE_SIZE } from '../formats/adt';
-import type { Db2 } from '../formats/db2';
-import { loadTable } from './clientDb';
+import { VanillaDisplays } from '../mpq/vanillaDisplays';
+import { VanillaStorage } from '../mpq/vanillaStorage';
+import { loadTable, type Table } from './clientDb';
 import { compose, fromQuaternion, identity, rotationZ, scaling, translation, type Mat4 } from './mat4';
 import type { GearAttachment, M2Options, ObjectKind, Placement } from './objects';
 import { ATTACH_HAND_LEFT, ATTACH_HAND_RIGHT, ATTACH_HELM, ATTACH_SHIELD, ATTACH_SHOULDER_LEFT, ATTACH_SHOULDER_RIGHT } from '../formats/m2Pose';
@@ -285,7 +286,12 @@ export class DisplayResolver {
 		materials: Map<number, number>;
 	}> | null = null;
 
-	constructor(private readonly storage: GameStorage) {}
+	/** The original client's tables are laid out differently, and name their files. */
+	private readonly vanilla: VanillaDisplays | null;
+
+	constructor(private readonly storage: GameStorage) {
+		this.vanilla = storage instanceof VanillaStorage ? new VanillaDisplays(storage) : null;
+	}
 
 	private load() {
 		this.tables ??= (async () => {
@@ -310,6 +316,7 @@ export class DisplayResolver {
 
 	/** Model scale from CreatureDisplayInfo, needed before the model itself loads. */
 	async scaleLookup(): Promise<(displayId: number) => number> {
+		if (this.vanilla) return this.vanilla.scaleLookup();
 		const { creatureDisplay } = await this.load();
 		return (id) => creatureDisplay.getFloat(id, 4) || 1;
 	}
@@ -319,6 +326,7 @@ export class DisplayResolver {
 	 * 3 FriendGroup, 4 EnemyGroup; group bits 1 player, 2 Alliance, 4 Horde, 8 monster).
 	 */
 	async reactionLookup(): Promise<ReactionLookup> {
+		if (this.vanilla) return this.vanilla.reactionLookup();
 		const { factions } = await this.load();
 		const toSide = (group: number, friend: number, enemy: number, side: number): Reaction =>
 			enemy & (side | FACTION_PLAYER) ? 'hostile' : (friend | group) & side ? 'friendly' : 'neutral';
@@ -335,6 +343,7 @@ export class DisplayResolver {
 	 * off hand is a shield] as item display IDs, from the spawn data.
 	 */
 	async creature(displayId: number, weapons: Weapons | null = null): Promise<{ fdid: number; options: M2Options } | null> {
+		if (this.vanilla) return this.vanilla.creature(displayId, weapons);
 		const { creatureDisplay, creatureModel, displayExtra, materials } = await this.load();
 		const modelId = creatureDisplay.getInt(displayId, 1);
 		const fdid = modelId ? creatureModel.getInt(modelId, 2) : null;
@@ -368,7 +377,7 @@ export class DisplayResolver {
 		return { fdid, options: { textures: { 11: skins[0], 12: skins[1], 13: skins[2] }, attachments: held, defaultGeosets: true, stand: true } };
 	}
 
-	private itemTables: Promise<{ items: Db2; byResource: Map<number, number[]>; components: Db2; materials: Map<number, number>; helmetHides: Map<number, [number, number][]> }> | null = null;
+	private itemTables: Promise<{ items: Table; byResource: Map<number, number[]>; components: Table; materials: Map<number, number>; helmetHides: Map<number, [number, number][]> }> | null = null;
 
 	private loadItems() {
 		this.itemTables ??= (async () => {
@@ -531,11 +540,11 @@ export class DisplayResolver {
 	private customizationTables: Promise<{
 		optionsByExtra: Map<number, [number, number][]>;
 		elementsByChoice: Map<number, number[]>;
-		element: Db2;
-		geoset: Db2;
-		choice: Db2;
-		option: Db2;
-		material: Db2;
+		element: Table;
+		geoset: Table;
+		choice: Table;
+		option: Table;
+		material: Table;
 	}> | null = null;
 
 	private loadCustomization() {
@@ -608,6 +617,7 @@ export class DisplayResolver {
 	}
 
 	async object(displayId: number): Promise<number | null> {
+		if (this.vanilla) return this.vanilla.object(displayId);
 		const { objectDisplay } = await this.load();
 		return objectDisplay.getInt(displayId, 1) || null;
 	}

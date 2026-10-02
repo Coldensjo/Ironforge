@@ -18,7 +18,8 @@ import { EditDocument } from '../editor/document';
 import { mountEditor } from '../editor/index';
 import { toggleHelp } from '../editor/ui/app';
 import { EditorViewport } from '../editor/viewport';
-import { loadWowSkin } from '../ui/wowSkin';import { FLY_SPEED_RANGE, FLY_SPEED_STEP, Viewer, type HudInfo, type ViewSettings } from './viewer';
+import { loadWowSkin } from '../ui/wowSkin';
+import { FLY_SPEED_RANGE, FLY_SPEED_STEP, Viewer, type HudInfo, type ViewSettings } from './viewer';
 import { setVolume, volumeSetting, type VolumeChannel } from './volume';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;

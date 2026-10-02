@@ -1,5 +1,5 @@
 import type { GameStorage, FileStatus } from '../casc/storage';
-import { parseVanillaWdt } from '../formats/vanilla';
+import { MINIMAP_TRANSLATE, parseMinimapTranslate, parseVanillaAdt, parseVanillaWdt } from '../formats/vanilla';
 import { vanillaContinents } from '../mpq/client';
 import { VanillaStorage } from '../mpq/vanillaStorage';
 import { isSandbox, sandboxHasTile, sandboxMinimap, sandboxTiles } from './sandbox';
@@ -67,10 +67,20 @@ export class MapExplorer {
 			const bytes = await this.storage.readFile(fdid);
 			// The original client's WDTs list tiles by flags only; its ADTs are found by the map's folder.
 			const vanilla = this.storage instanceof VanillaStorage ? this.storage : null;
-			wdt = vanilla ? parseVanillaWdt(bytes, vanilla.pathOf(fdid)!.split('\\')[2], (p) => vanilla.idOf(p)) : parseWdt(bytes);
+			wdt = vanilla ? parseVanillaWdt(bytes, vanilla.pathOf(fdid)!.split('\\')[2], (p) => vanilla.idOf(p), await this.vanillaMinimaps(vanilla)) : parseWdt(bytes);
 			this.wdts.set(fdid, wdt);
 		}
 		return wdt;
+	}
+
+	private minimapTable: Promise<Map<string, string>> | null = null;
+
+	/** The original client's minimap names (md5translate.trs), read once; empty if it has none. */
+	private vanillaMinimaps(storage: VanillaStorage): Promise<Map<string, string>> {
+		this.minimapTable ??= storage.mpq.read(MINIMAP_TRANSLATE)
+			.then((bytes) => parseMinimapTranslate(bytes ? new TextDecoder().decode(bytes) : ''))
+			.catch(() => new Map());
+		return this.minimapTable;
 	}
 
 	private fileStatus(fdid: number): FileStatus | 'none' {
@@ -124,7 +134,8 @@ export class MapExplorer {
 
 		await Promise.all([
 			attempt('Terrain', tile.files.root, (bytes) => {
-				const adt = parseAdtRoot(bytes);
+				const storage = this.storage;
+				const adt = storage instanceof VanillaStorage ? parseVanillaAdt(bytes, (p) => storage.idOf(p)).root : parseAdtRoot(bytes);
 				details.heightGrid = tileHeightGrid(adt);
 				details.areaIds = [...new Set(adt.chunks.map((c) => c.areaId))].sort((a, b) => a - b);
 				details.chunkCount = adt.chunks.length;

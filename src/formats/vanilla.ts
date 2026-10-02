@@ -42,11 +42,31 @@ export function adtPath(folder: string, x: number, y: number): string {
 export const wdtPath = (folder: string) => `World\\Maps\\${folder}\\${folder}.wdt`;
 export const wdlPath = (folder: string) => `World\\Maps\\${folder}\\${folder}.wdl`;
 
+/** Where the original client's minimap images are, and the table naming them. */
+export const MINIMAP_FOLDER = 'Textures\\Minimap';
+export const MINIMAP_TRANSLATE = `${MINIMAP_FOLDER}\\md5translate.trs`;
+
+/**
+ * md5translate.trs: the minimap images are stored under hashed names, listed by what they show.
+ * Lines are "<folder>\map<x>_<y>.blp<tab><hash>.blp" (and "dir: <folder>" headings). Returns
+ * each tile's image path by "<folder>\map<x>_<y>", lower case.
+ */
+export function parseMinimapTranslate(text: string): Map<string, string> {
+	const out = new Map<string, string>();
+	for (const line of text.split(/\r?\n/)) {
+		const [shown, stored] = line.split('\t');
+		if (!stored) continue;
+		out.set(shown.trim().toLowerCase().replace(/\.blp$/, ''), `${MINIMAP_FOLDER}\\${stored.trim()}`);
+	}
+	return out;
+}
+
 /**
  * A 1.12 WDT, in the shape the modern parser gives: each tile's root file is its ADT (by name,
- * as a number from idOf); the modern split files and minimaps it doesn't have are 0.
+ * as a number from idOf), its minimap from the minimap table where it has one; the modern
+ * split files it doesn't have are 0.
  */
-export function parseVanillaWdt(bytes: Uint8Array, folder: string, idOf: IdOf): Wdt {
+export function parseVanillaWdt(bytes: Uint8Array, folder: string, idOf: IdOf, minimaps?: Map<string, string>): Wdt {
 	const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 	let flags = 0;
 	let main: number | null = null;
@@ -68,6 +88,8 @@ export function parseVanillaWdt(bytes: Uint8Array, folder: string, idOf: IdOf): 
 		const y = Math.floor(i / MAP_SIZE);
 		const files = Object.fromEntries(TILE_FILE_KINDS.map((k) => [k, 0])) as WdtTile['files'];
 		files.root = idOf(adtPath(folder, x, y));
+		const minimap = minimaps?.get(`${folder}\\map${x}_${y}`.toLowerCase());
+		if (minimap) files.minimap = idOf(minimap);
 		tiles[i] = { x, y, flags: 0, files, flowMap: 0 };
 		tileCount++;
 	}

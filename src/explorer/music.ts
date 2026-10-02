@@ -1,6 +1,5 @@
 import type { GameStorage } from '../casc/storage';
-import type { Db2 } from '../formats/db2';
-import { DB2_FILES, loadTable } from './clientDb';
+import { DB2_FILES, loadTable, type Table } from './clientDb';
 
 /** A zone's music (ZoneMusic.db2): tracks by day and night, and the quiet between them. */
 export interface MusicSet {
@@ -165,7 +164,7 @@ export class MusicTables {
 	}
 }
 
-function indexWmoRows(table: Db2): Map<string, number> {
+function indexWmoRows(table: Table): Map<string, number> {
 	const rows = new Map<string, number>();
 	for (const id of table.ids()) rows.set(`${table.getInt(id, WMO_ID)}:${table.getInt(id, WMO_NAME_SET)}:${table.getInt(id, WMO_GROUP)}`, id);
 	return rows;

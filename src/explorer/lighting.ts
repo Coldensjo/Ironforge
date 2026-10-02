@@ -1,4 +1,6 @@
 import type { GameStorage } from '../casc/storage';
+import { loadVanillaLighting } from '../mpq/vanillaLighting';
+import { VanillaStorage } from '../mpq/vanillaStorage';
 import { DB2_FILES, loadTable } from './clientDb';
 
 /** Order of the colours in a LightKey (LightData fields 3-15). */
@@ -59,6 +61,7 @@ const asFloat = (raw: number) => {
 
 /** Light zones and their day-cycle keyframes for the given maps (Map.db2 IDs). */
 export async function loadLighting(storage: GameStorage, mapIds: number[]): Promise<LightingData> {
+	if (storage instanceof VanillaStorage) return loadVanillaLighting(storage, mapIds);
 	const [lights, data] = await Promise.all([loadTable(storage, DB2_FILES.Light), loadTable(storage, DB2_FILES.LightData)]);
 	const zones: LightZone[] = [];
 	for (const id of lights.ids()) {

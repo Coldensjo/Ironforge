@@ -154,10 +154,13 @@ export class WorldLoader {
 		const name = table.getString(mapId, MAP_NAME) ?? `Map ${mapId}`;
 		const tiles = wdt.tiles.filter((t) => t !== null);
 		// Older maps keep their WDL right before the WDT; newer ones' can't be found (unnamed).
+		// The original client's is named like its WDT.
+		const storage = this.storage;
+		const wdlFdid = storage instanceof VanillaStorage ? storage.idOf(storage.pathOf(wdtFdid)!.replace(/\.wdt$/i, '.wdl')) : wdtFdid - 1;
 		let farTiles: FarTile[] = [];
-		if (tiles.length && this.storage.status(wdtFdid - 1) === 'ok') {
+		if (tiles.length && storage.status(wdlFdid) === 'ok') {
 			try {
-				const far = await this.loadFarTiles(wdtFdid, wdtFdid - 1);
+				const far = await this.loadFarTiles(wdtFdid, wdlFdid);
 				if (tiles.every((t) => far.some((f) => f.x === t.x && f.y === t.y))) farTiles = far;
 			} catch {
 				// Not a WDL after all.
@@ -473,8 +476,6 @@ export class WorldLoader {
 		return this.music.wmoArea(wmoId, nameSet, groupId);
 	}
 
-	/** A sound file's bytes (the music tracks are MP3s). */
-	/** A font file from the game (Fonts\*.ttf), as it is. */
 	/** Interface textures (frames, buttons, icons, cursors) decoded to RGBA; null where missing. */
 	async loadImages(fdids: number[]): Promise<(Image | null)[]> {
 		return Promise.all(fdids.map(async (fdid) => {
@@ -487,10 +488,12 @@ export class WorldLoader {
 		}));
 	}
 
+	/** A font file from the game (Fonts\*.ttf), as it is. */
 	async loadFont(fdid: number): Promise<Uint8Array> {
 		return (await this.storage.readFile(fdid)).slice();
 	}
 
+	/** A sound file's bytes (the music tracks are MP3s). */
 	async loadSound(fdid: number): Promise<Uint8Array> {
 		// A copy: the result is transferred to the main thread, and the storage may cache what it read.
 		return (await this.storage.readFile(fdid)).slice();
