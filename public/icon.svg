@@ -5,73 +5,89 @@
 			<stop offset="0.45" stop-color="#e0a93a"/>
 			<stop offset="1" stop-color="#8a5a14"/>
 		</linearGradient>
-		<radialGradient id="forge" cx="50%" cy="78%" r="75%">
-			<stop offset="0" stop-color="#b8471a"/>
-			<stop offset="0.35" stop-color="#5a2412"/>
-			<stop offset="1" stop-color="#1a0f0a"/>
+		<radialGradient id="back" cx="50%" cy="38%" r="70%">
+			<stop offset="0" stop-color="#6b737c"/>
+			<stop offset="0.6" stop-color="#3b4249"/>
+			<stop offset="1" stop-color="#1d2126"/>
 		</radialGradient>
-		<linearGradient id="steel" x1="0" y1="0" x2="1" y2="1">
-			<stop offset="0" stop-color="#e4eaee"/>
-			<stop offset="0.45" stop-color="#8f9aa4"/>
-			<stop offset="1" stop-color="#454c54"/>
-		</linearGradient>
-		<linearGradient id="horn" x1="0" y1="1" x2="0" y2="0">
-			<stop offset="0" stop-color="#8c7650"/>
-			<stop offset="0.5" stop-color="#d9c79c"/>
-			<stop offset="1" stop-color="#fff6de"/>
-		</linearGradient>
-		<linearGradient id="skin" x1="0" y1="0" x2="0" y2="1">
-			<stop offset="0" stop-color="#f0c29a"/>
-			<stop offset="1" stop-color="#c98a62"/>
+		<radialGradient id="skin" cx="45%" cy="35%" r="70%">
+			<stop offset="0" stop-color="#f6c9a2"/>
+			<stop offset="0.6" stop-color="#df9d74"/>
+			<stop offset="1" stop-color="#a8664a"/>
+		</radialGradient>
+		<radialGradient id="nose" cx="40%" cy="35%" r="70%">
+			<stop offset="0" stop-color="#f7c6a0"/>
+			<stop offset="0.6" stop-color="#e09068"/>
+			<stop offset="1" stop-color="#b0604a"/>
+		</radialGradient>
+		<linearGradient id="hair" x1="0" y1="0" x2="0" y2="1">
+			<stop offset="0" stop-color="#ffb24a"/>
+			<stop offset="0.5" stop-color="#ec6a1c"/>
+			<stop offset="1" stop-color="#a8360c"/>
 		</linearGradient>
 		<linearGradient id="beard" x1="0" y1="0" x2="0" y2="1">
-			<stop offset="0" stop-color="#e08a3a"/>
-			<stop offset="0.55" stop-color="#b0521e"/>
-			<stop offset="1" stop-color="#6e2c10"/>
+			<stop offset="0" stop-color="#f58a2a"/>
+			<stop offset="0.5" stop-color="#e05a16"/>
+			<stop offset="1" stop-color="#9a2e0a"/>
+		</linearGradient>
+		<radialGradient id="leather" cx="40%" cy="30%" r="75%">
+			<stop offset="0" stop-color="#e2a24a"/>
+			<stop offset="0.55" stop-color="#b06a24"/>
+			<stop offset="1" stop-color="#6a3a12"/>
+		</radialGradient>
+		<linearGradient id="iron" x1="0" y1="0" x2="0" y2="1">
+			<stop offset="0" stop-color="#8a8f96"/>
+			<stop offset="1" stop-color="#3a3e44"/>
 		</linearGradient>
 		<clipPath id="disc"><circle cx="128" cy="128" r="104"/></clipPath>
 	</defs>
 
-	<!-- Gold rim, as before -->
+	<!-- Gold rim -->
 	<circle cx="128" cy="128" r="122" fill="url(#gold)"/>
 	<circle cx="128" cy="128" r="122" fill="none" stroke="#4a2e08" stroke-width="4"/>
 	<circle cx="128" cy="128" r="106" fill="#4a2e08"/>
-	<circle cx="128" cy="128" r="104" fill="url(#forge)"/>
+	<circle cx="128" cy="128" r="104" fill="url(#back)"/>
 
-	<g clip-path="url(#disc)">
-		<!-- Horns, behind the helmet -->
-		<path d="M78 104C58 98 42 84 36 52c12 16 26 24 46 26z" fill="url(#horn)" stroke="#3a2a14" stroke-width="4" stroke-linejoin="round"/>
-		<path d="M178 104c20-6 36-20 42-52-12 16-26 24-46 26z" fill="url(#horn)" stroke="#3a2a14" stroke-width="4" stroke-linejoin="round"/>
+	<g clip-path="url(#disc)" stroke-linejoin="round" stroke-linecap="round">
+		<g transform="translate(128 140) scale(1.12) translate(-128 -136)">
+		<!-- Hair, swept back and up -->
+		<path d="M78 112c-10-26-4-54 16-68-2 8 0 14 4 16 4-14 16-24 30-26-4 6-4 12-2 16 8-10 22-14 34-12-6 4-8 10-8 14 14-2 28 8 32 20-6-2-12-2-16 2 10 8 12 22 8 38z" fill="url(#hair)" stroke="#5a1c06" stroke-width="3.5"/>
 
-		<!-- Beard, under the face: a broad spade with braids -->
-		<path d="M70 124c-4 46 10 86 58 112 48-26 62-66 58-112-8 26-28 42-58 44-30-2-50-18-58-44z" fill="url(#beard)" stroke="#3a160a" stroke-width="4" stroke-linejoin="round"/>
-		<path d="M100 176c-2 18 4 34 14 46M156 176c2 18-4 34-14 46M128 184v42" fill="none" stroke="#5a220c" stroke-width="5" stroke-linecap="round"/>
-		<rect x="106" y="210" width="16" height="9" rx="3" fill="url(#gold)" stroke="#4a2e08" stroke-width="2.5" transform="rotate(-24 114 214)"/>
-		<rect x="134" y="210" width="16" height="9" rx="3" fill="url(#gold)" stroke="#4a2e08" stroke-width="2.5" transform="rotate(24 142 214)"/>
+		<!-- Ears -->
+		<path d="M84 104c-12-4-16 10-12 20 4 8 10 10 16 8z" fill="url(#skin)" stroke="#6a3a26" stroke-width="3"/>
+		<path d="M172 104c12-4 16 10 12 20-4 8-10 10-16 8z" fill="url(#skin)" stroke="#6a3a26" stroke-width="3"/>
 
-		<!-- Face -->
-		<path d="M84 118h88l-4 38c-10 12-24 18-40 18s-30-6-40-18z" fill="url(#skin)" stroke="#5a3418" stroke-width="3" stroke-linejoin="round"/>
-		<!-- Eyes under bushy brows -->
-		<ellipse cx="108" cy="138" rx="6" ry="5" fill="#1c120c"/>
-		<ellipse cx="148" cy="138" rx="6" ry="5" fill="#1c120c"/>
-		<circle cx="110" cy="136" r="1.8" fill="#fff"/>
-		<circle cx="150" cy="136" r="1.8" fill="#fff"/>
-		<path d="M90 130c8-8 22-10 32-4-10-1-20 2-26 8z" fill="#c4692a" stroke="#3a160a" stroke-width="3" stroke-linejoin="round"/>
-		<path d="M166 130c-8-8-22-10-32-4 10-1 20 2 26 8z" fill="#c4692a" stroke="#3a160a" stroke-width="3" stroke-linejoin="round"/>
-		<!-- A proper dwarven nose -->
-		<path d="M122 132c-2 10-8 16-8 22 0 8 6 11 14 11s14-3 14-11c0-6-6-12-8-22z" fill="#e0a479" stroke="#5a3418" stroke-width="3" stroke-linejoin="round"/>
-		<!-- Moustache, curling out over the beard -->
-		<path d="M128 164c-10-6-26-6-38 4-6 5-14 4-18-2 4 14 20 20 34 14 10-4 16-8 22-8 6 0 12 4 22 8 14 6 30 0 34-14-4 6-12 7-18 2-12-10-28-10-38-4z" fill="#d07a32" stroke="#3a160a" stroke-width="3.5" stroke-linejoin="round"/>
+		<!-- Face: a broad, weathered head -->
+		<path d="M86 108c0-30 18-50 42-50s42 20 42 50l2 22c0 14-16 24-44 24s-44-10-44-24z" fill="url(#skin)" stroke="#6a3a26" stroke-width="3"/>
+		<path d="M104 72c8-6 16-8 26-8" fill="none" stroke="#ffe3c8" stroke-opacity="0.6" stroke-width="4"/>
+		<!-- Ruddy cheeks -->
+		<ellipse cx="100" cy="128" rx="10" ry="7" fill="#d4624a" opacity="0.45"/>
+		<ellipse cx="156" cy="128" rx="10" ry="7" fill="#d4624a" opacity="0.45"/>
 
-		<!-- Helmet: a steel dome with a gold band and rivets -->
-		<path d="M68 120c0-46 26-74 60-74s60 28 60 74z" fill="url(#steel)" stroke="#1f2327" stroke-width="4" stroke-linejoin="round"/>
-		<path d="M96 60c8-6 18-9 28-10" fill="none" stroke="#ffffff" stroke-opacity="0.55" stroke-width="5" stroke-linecap="round"/>
-		<path d="M128 46v62" stroke="#5c656e" stroke-width="5"/>
-		<rect x="62" y="104" width="132" height="20" rx="5" fill="url(#gold)" stroke="#4a2e08" stroke-width="4"/>
-		<circle cx="80" cy="114" r="3.5" fill="#4a2e08"/>
-		<circle cx="104" cy="114" r="3.5" fill="#4a2e08"/>
-		<circle cx="152" cy="114" r="3.5" fill="#4a2e08"/>
-		<circle cx="176" cy="114" r="3.5" fill="#4a2e08"/>
-		<path d="M118 104h20l-2 22h-16z" fill="url(#steel)" stroke="#1f2327" stroke-width="3" stroke-linejoin="round"/>
+		<!-- Stern eyes, blue -->
+		<path d="M101 113c5-3 11-3 16 0-5 4-11 4-16 0z" fill="#fff6ea"/>
+		<path d="M139 113c5-3 11-3 16 0-5 4-11 4-16 0z" fill="#fff6ea"/>
+		<circle cx="110" cy="113" r="3" fill="#3d8fd6"/>
+		<circle cx="146" cy="113" r="3" fill="#3d8fd6"/>
+		<circle cx="110" cy="113" r="1.4" fill="#10202e"/>
+		<circle cx="146" cy="113" r="1.4" fill="#10202e"/>
+		<path d="M100 112c6-4 12-4 18 1M138 113c6-5 12-5 18-1" fill="none" stroke="#5a2a18" stroke-width="2.5"/>
+		<!-- Heavy brows, drawn down in a frown -->
+		<path d="M84 94c8-4 16-6 24-4 8 2 14 8 20 16-6-1-12-2-18 0-6 2-12 2-18 0-4-2-7-6-8-12z" fill="url(#hair)" stroke="#5a1c06" stroke-width="3"/>
+		<path d="M172 94c-8-4-16-6-24-4-8 2-14 8-20 16 6-1 12-2 18 0 6 2 12 2 18 0 4-2 7-6 8-12z" fill="url(#hair)" stroke="#5a1c06" stroke-width="3"/>
+		<path d="M124 102c2 3 6 3 8 0" fill="none" stroke="#8a4a32" stroke-width="2.5"/>
+
+		<!-- Beard: a great flowing mass over the chest -->
+		<path d="M82 120c-12 30-12 70 8 102 10 16 24 28 38 36 14-8 28-20 38-36 20-32 20-72 8-102-6 22-24 38-46 38s-40-16-46-38z" fill="url(#beard)" stroke="#5a1c06" stroke-width="3.5"/>
+		<path d="M96 160c-4 22 2 46 14 66M112 166c-2 24 2 46 10 64M144 166c2 24-2 46-10 64M160 160c4 22-2 46-14 66M128 170v72" fill="none" stroke="#a83a0e" stroke-width="3.5" opacity="0.85"/>
+		<path d="M104 176c-2 14 0 26 6 38M150 176c2 14 0 26-6 38" fill="none" stroke="#ffb35a" stroke-width="2.5" opacity="0.7"/>
+
+		<!-- Moustache, sweeping out -->
+		<path d="M128 140c-12-6-30-4-42 8-6 6-14 6-18 2 4 16 22 22 38 14 10-5 16-8 22-8s12 3 22 8c16 8 34 2 38-14-4 4-12 4-18-2-12-12-30-14-42-8z" fill="url(#hair)" stroke="#5a1c06" stroke-width="3.5"/>
+
+		<!-- A big dwarven nose -->
+		<path d="M120 104c-2 12-10 18-10 28 0 10 8 14 18 14s18-4 18-14c0-10-8-16-10-28z" fill="url(#nose)" stroke="#6a3a26" stroke-width="3"/>
+		<ellipse cx="122" cy="126" rx="4" ry="3" fill="#fff0e0" opacity="0.6"/>
+		</g>
 	</g>
 </svg>
