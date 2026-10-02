@@ -20,6 +20,8 @@ export function installRoot(path: string): string | null {
 	let dir = resolve(path);
 	for (let up = 0; up < 3; up++) {
 		if (existsSync(join(dir, '.build.info')) && existsSync(join(dir, 'Data', 'data'))) return dir;
+		// The original (1.12) client: no .build.info, its archives straight in Data.
+		if (existsSync(join(dir, 'Data', 'dbc.MPQ')) || existsSync(join(dir, 'Data', 'terrain.MPQ'))) return dir;
 		const parent = dirname(dir);
 		if (parent === dir) break;
 		dir = parent;

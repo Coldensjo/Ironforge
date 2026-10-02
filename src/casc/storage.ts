@@ -12,6 +12,19 @@ const ARCHIVE_ENTRY_HEADER = 0x1e;
 
 export type FileStatus = 'ok' | 'unknown' | 'no-encoding' | 'not-local';
 
+/**
+ * Game files by number, as the engine reads them: the modern client's (CASC, by FileDataID) or the
+ * original client's (MPQ, whose paths VanillaStorage numbers).
+ */
+export interface GameStorage {
+	status(fdid: number): FileStatus;
+	readFile(fdid: number): Promise<Uint8Array>;
+	/** With allowPartial, encrypted parts are zero-filled instead of failing the read. */
+	readFileWithStatus(fdid: number, allowPartial?: boolean): Promise<BlteResult>;
+	/** A path's number, or null if there's no such file. */
+	lookupPath(path: string): number | null;
+}
+
 export interface StorageStats {
 	product: string;
 	version: string;
@@ -57,7 +70,7 @@ class ArchiveReader {
 }
 
 /** Read-only view of a local CASC storage for one product (e.g. wow_classic_beta). */
-export class CascStorage {
+export class CascStorage implements GameStorage {
 	private constructor(
 		private readonly archives: ArchiveReader,
 		private readonly encoding: EncodingTable,

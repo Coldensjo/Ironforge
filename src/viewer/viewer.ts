@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { SunLight } from 'three/addons/lights/SunLight.js';
 import { TILE_SIZE } from '../formats/adt';
-import { KNOWN_MAPS } from '../explorer/maps';
+import type { KnownMap } from '../explorer/maps';
 import { SANDBOX_CENTER, SANDBOX_MAP_ID, SANDBOX_NAME, SANDBOX_WDT } from '../explorer/sandbox';
 import type { FarTile, InstanceMap, MapCategory } from '../explorer/world';
 import type { AsyncStorageApi } from '../worker/protocol';
@@ -580,8 +580,9 @@ export class Viewer {
 			this.continents = [field];
 			this.terrain.addContinent(field, await this.storage.loadFarTiles(SANDBOX_WDT, 0));
 		} else {
-			const loaded: { map: (typeof KNOWN_MAPS)[number]; tiles: FarTile[] }[] = [];
-			for (const map of KNOWN_MAPS) {
+			const loaded: { map: KnownMap; tiles: FarTile[] }[] = [];
+			// The continents' files, as numbered by the client open (the modern one's or the original's).
+			for (const map of await this.storage.knownMaps()) {
 				onStatus(`Reading ${map.name} heightmap`);
 				loaded.push({ map, tiles: await this.storage.loadFarTiles(map.wdt, map.wdl) });
 			}
@@ -1553,7 +1554,7 @@ function layoutMaps(maps: { map: InstanceMap; category: MapCategory }[], world: 
 }
 
 /** Places Kalimdor west of the Eastern Kingdoms, vertically centred, with open sea between. */
-function layoutContinents(loaded: { map: (typeof KNOWN_MAPS)[number]; tiles: FarTile[] }[]): ContinentPlacement[] {
+function layoutContinents(loaded: { map: KnownMap; tiles: FarTile[] }[]): ContinentPlacement[] {
 	const extent = (tiles: FarTile[]) => {
 		const land = tiles.filter((t) => t.hasAdt);
 		const xs = land.map((t) => t.x);

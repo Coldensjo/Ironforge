@@ -1,4 +1,4 @@
-import type { CascStorage } from '../casc/storage';
+import type { GameStorage } from '../casc/storage';
 import { DB2_FILES, loadTable } from './clientDb';
 
 /** Order of the colours in a LightKey (LightData fields 3-15). */
@@ -58,7 +58,7 @@ const asFloat = (raw: number) => {
 };
 
 /** Light zones and their day-cycle keyframes for the given maps (Map.db2 IDs). */
-export async function loadLighting(storage: CascStorage, mapIds: number[]): Promise<LightingData> {
+export async function loadLighting(storage: GameStorage, mapIds: number[]): Promise<LightingData> {
 	const [lights, data] = await Promise.all([loadTable(storage, DB2_FILES.Light), loadTable(storage, DB2_FILES.LightData)]);
 	const zones: LightZone[] = [];
 	for (const id of lights.ids()) {
@@ -97,7 +97,7 @@ export async function loadLighting(storage: CascStorage, mapIds: number[]): Prom
 }
 
 /** Area names and parents (AreaTable.db2), for zone and subzone display. */
-export async function loadAreas(storage: CascStorage): Promise<AreaInfo[]> {
+export async function loadAreas(storage: GameStorage): Promise<AreaInfo[]> {
 	const table = await loadTable(storage, DB2_FILES.AreaTable);
 	return table.ids().map((id) => ({ id, name: table.getString(id, 1) ?? '', parent: table.getInt(id, 3) ?? 0 }));
 }

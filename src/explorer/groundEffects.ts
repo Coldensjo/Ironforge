@@ -1,4 +1,4 @@
-import type { CascStorage } from '../casc/storage';
+import type { GameStorage } from '../casc/storage';
 import { CHUNKS_PER_TILE, TILE_CELLS, type AdtRoot } from '../formats/adt';
 import type { AdtTex } from '../formats/adtTex';
 import { DB2_FILES, loadTable } from './clientDb';
@@ -51,7 +51,7 @@ export interface ClutterSource {
 export class GroundEffects {
 	private constructor(private readonly effects: Map<number, ClutterEffect | null>) {}
 
-	static async load(storage: CascStorage): Promise<GroundEffects> {
+	static async load(storage: GameStorage): Promise<GroundEffects> {
 		const [textures, doodads] = await Promise.all([loadTable(storage, DB2_FILES.GroundEffectTexture), loadTable(storage, DB2_FILES.GroundEffectDoodad)]);
 		const effects = new Map<number, ClutterEffect | null>();
 		for (const id of textures.ids()) {

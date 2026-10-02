@@ -126,7 +126,8 @@ function decodeRle(data: Uint8Array, out: Uint8Array): void {
 	}
 }
 
-function decode4Bit(data: Uint8Array, out: Uint8Array, fix: boolean): void {
+/** 4-bit alpha (two texels a byte, low first); fix: the 63x63 kind, its last row and column repeated. */
+export function decode4Bit(data: Uint8Array, out: Uint8Array, fix: boolean): void {
 	for (let i = 0; i < ALPHA_TEXELS / 2 && i < data.length; i++) {
 		out[i * 2] = (data[i] & 0x0f) * 17;
 		out[i * 2 + 1] = (data[i] >> 4) * 17;

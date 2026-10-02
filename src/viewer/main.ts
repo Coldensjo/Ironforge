@@ -87,7 +87,8 @@ async function useSource(init: SourceInit): Promise<void> {
 		const select = $<HTMLSelectElement>('product');
 		select.replaceChildren(...products.map((p) => new Option(`${p.product} ${p.version}`, p.product)));
 		// Prefer a classic build: the continent file IDs are the classic ones.
-		const preferred = products.find((p) => p.product === 'wow_classic_beta') ?? products.find((p) => p.product.startsWith('wow_classic'));
+		const preferred = products.find((p) => p.product === 'wow_classic_beta') ?? products.find((p) => p.product.startsWith('wow_classic'))
+			?? products.find((p) => p.product === 'wow_vanilla');
 		if (preferred) {
 			// Nothing to choose: straight in.
 			select.value = preferred.product;
@@ -116,6 +117,11 @@ async function findWow(): Promise<void> {
 		const response = await fetch(`${base}.build.info`, { method: 'HEAD' });
 		// Some servers answer every path with the page itself.
 		found = response.ok && !response.headers.get('Content-Type')?.includes('text/html');
+		// The original (1.12) client has no .build.info: its Data folder lists MPQs instead.
+		if (!found) {
+			const listing = await fetch(`${base}Data/`);
+			found = listing.ok && !listing.headers.get('Content-Type')?.includes('text/html') && /\.mpq$/im.test(await listing.text());
+		}
 	} catch {
 		// Not served from here.
 	}

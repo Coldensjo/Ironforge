@@ -1,4 +1,4 @@
-import type { CascStorage } from '../casc/storage';
+import type { GameStorage } from '../casc/storage';
 import { Db2 } from '../formats/db2';
 import type { LiquidKind } from '../formats/mh2o';
 
@@ -23,10 +23,10 @@ export const DB2_FILES = {
 	ZoneMusic: 1310254,
 } as const;
 
-const tables = new WeakMap<CascStorage, Map<number, Promise<Db2>>>();
+const tables = new WeakMap<GameStorage, Map<number, Promise<Db2>>>();
 
 /** Loads a table once per storage. Encrypted sections are skipped rather than failing. */
-export function loadTable(storage: CascStorage, fdid: number): Promise<Db2> {
+export function loadTable(storage: GameStorage, fdid: number): Promise<Db2> {
 	let cache = tables.get(storage);
 	if (!cache) {
 		cache = new Map();
@@ -70,7 +70,7 @@ const LIQUID_FOAM_COLOR = 15;
 const LIQUID_COLORS = 17;
 
 /** Underwater looks of every liquid type. */
-export async function liquidLooks(storage: CascStorage): Promise<LiquidLooks> {
+export async function liquidLooks(storage: GameStorage): Promise<LiquidLooks> {
 	const table = await loadTable(storage, DB2_FILES.LiquidType);
 	const types: Record<number, LiquidLook> = {};
 	let ocean = 2;
@@ -108,7 +108,7 @@ const LOCK_KINDS: Record<number, LockKind> = { 1: 'lockbox', 2: 'herb', 3: 'ore'
  * Locks that take Herbalism, Mining or Lockpicking, by Lock ID (game object data0 for chests,
  * which is what herbs and ore veins are). Quest objects gathered without the skill need none.
  */
-export async function lockKinds(storage: CascStorage): Promise<Record<number, LockKind>> {
+export async function lockKinds(storage: GameStorage): Promise<Record<number, LockKind>> {
 	const table = await loadTable(storage, DB2_FILES.Lock);
 	const kinds: Record<number, LockKind> = {};
 	for (const id of table.ids()) {
@@ -124,7 +124,7 @@ export async function lockKinds(storage: CascStorage): Promise<Record<number, Lo
 }
 
 /** Classifies liquid types by name ("Ocean", "Magma", "PBRWater - Generic - Lake", ...). */
-export async function liquidKinds(storage: CascStorage): Promise<(type: number) => LiquidKind> {
+export async function liquidKinds(storage: GameStorage): Promise<(type: number) => LiquidKind> {
 	let table: Db2 | null = null;
 	try {
 		table = await loadTable(storage, DB2_FILES.LiquidType);

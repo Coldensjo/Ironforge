@@ -1,4 +1,4 @@
-import type { CascStorage } from '../casc/storage';
+import type { GameStorage } from '../casc/storage';
 import type { Db2 } from '../formats/db2';
 import { DB2_FILES, loadTable } from './clientDb';
 
@@ -67,7 +67,7 @@ export class MusicTables {
 	private data: Promise<MusicData> | null = null;
 	private wmoRows: Promise<Map<string, number>> | null = null;
 
-	constructor(private readonly storage: CascStorage) {}
+	constructor(private readonly storage: GameStorage) {}
 
 	load(): Promise<MusicData> {
 		this.data ??= this.read();

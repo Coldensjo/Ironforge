@@ -3,6 +3,7 @@ import { CascStorage } from '../casc/storage';
 import { describeError, MapExplorer } from '../explorer/maps';
 import { setPageUrl } from '../explorer/spawns';
 import { WorldLoader } from '../explorer/world';
+import { isVanillaClient, openVanilla, VANILLA_PRODUCT, vanillaProduct } from '../mpq/client';
 import type { AsyncStorageApi, Request, Response, SourceInit } from './protocol';
 
 let source: FileSource | null = null;
@@ -31,14 +32,26 @@ const api: AsyncStorageApi = {
 		source = init.kind === 'handle' ? new DirectoryHandleSource(init.handle) : init.kind === 'http' ? new HttpSource(init.base) : new FileListSource(init.files);
 		explorer = null;
 		world = null;
+		// The original (1.12) client has no .build.info, just MPQs in Data.
+		if (await isVanillaClient(source)) return [vanillaProduct];
 		return CascStorage.listProducts(source);
 	},
 	async open(product) {
 		if (!source) throw new Error('No folder selected');
+		if (product === VANILLA_PRODUCT) {
+			send({ id: -1, progress: 'Reading the archives' });
+			const storage = await openVanilla(source);
+			explorer = new MapExplorer(storage);
+			world = null;
+			return { product, version: '1.12', buildName: 'World of Warcraft 1.12', indexEntries: 0, encodingPages: 0, rootFiles: 0, rootNamedFiles: 0, timings: {} };
+		}
 		const storage = await CascStorage.open(source, product, (progress) => send({ id: -1, progress }));
 		explorer = new MapExplorer(storage);
 		world = null;
 		return storage.stats;
+	},
+	async knownMaps() {
+		return requireExplorer().knownMaps();
 	},
 	async loadMap(wdtFdid) {
 		return requireExplorer().loadMap(wdtFdid);

@@ -1,4 +1,7 @@
-import type { CascStorage, FileStatus } from '../casc/storage';
+import type { GameStorage, FileStatus } from '../casc/storage';
+import { parseVanillaWdt } from '../formats/vanilla';
+import { vanillaContinents } from '../mpq/client';
+import { VanillaStorage } from '../mpq/vanillaStorage';
 import { isSandbox, sandboxHasTile, sandboxMinimap, sandboxTiles } from './sandbox';
 import { EncryptedError } from '../casc/blte';
 import { parseAdtRoot, tileHeightGrid } from '../formats/adt';
@@ -11,6 +14,9 @@ export const KNOWN_MAPS = [
 	{ name: 'Eastern Kingdoms', directory: 'Azeroth', mapId: 0, wdt: 775971, wdl: 775970 },
 	{ name: 'Kalimdor', directory: 'Kalimdor', mapId: 1, wdt: 782779, wdl: 782778 },
 ];
+
+/** A continent: its name, folder, Map ID, and its WDT's and WDL's file numbers. */
+export type KnownMap = (typeof KNOWN_MAPS)[number];
 
 export type FileAvailability = Record<TileFileKind, Partial<Record<FileStatus | 'none', number>>>;
 
@@ -48,12 +54,20 @@ export interface TileDetails {
 export class MapExplorer {
 	private readonly wdts = new Map<number, Wdt>();
 
-	constructor(readonly storage: CascStorage) {}
+	constructor(readonly storage: GameStorage) {}
+
+	/** The continents, with their files' numbers in this storage. */
+	knownMaps(): KnownMap[] {
+		return this.storage instanceof VanillaStorage ? vanillaContinents(this.storage) : KNOWN_MAPS;
+	}
 
 	async wdt(fdid: number): Promise<Wdt> {
 		let wdt = this.wdts.get(fdid);
 		if (!wdt) {
-			wdt = parseWdt(await this.storage.readFile(fdid));
+			const bytes = await this.storage.readFile(fdid);
+			// The original client's WDTs list tiles by flags only; its ADTs are found by the map's folder.
+			const vanilla = this.storage instanceof VanillaStorage ? this.storage : null;
+			wdt = vanilla ? parseVanillaWdt(bytes, vanilla.pathOf(fdid)!.split('\\')[2], (p) => vanilla.idOf(p)) : parseWdt(bytes);
 			this.wdts.set(fdid, wdt);
 		}
 		return wdt;

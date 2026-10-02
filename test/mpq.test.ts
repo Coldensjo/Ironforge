@@ -73,3 +73,28 @@ describe.skipIf(!existsSync(join(VANILLA, 'Data', 'dbc.MPQ')))('a vanilla 1.12.1
 		}
 	}, 60000);
 });
+
+describe.skipIf(!existsSync(join(VANILLA, 'Data', 'terrain.MPQ')))('vanilla map files', () => {
+	it("reads Northshire's tile: its ground, texture layers and water", async () => {
+		const { MpqStorage } = await import('../src/mpq/storage');
+		const { VanillaStorage } = await import('../src/mpq/vanillaStorage');
+		const { adtPath, parseVanillaAdt, parseVanillaWdt, wdtPath } = await import('../src/formats/vanilla');
+		const storage = new VanillaStorage(await MpqStorage.open(new NodeSource(VANILLA)));
+		const idOf = (p: string) => storage.idOf(p);
+		const wdt = parseVanillaWdt(await storage.readFile(idOf(wdtPath('Azeroth'))), 'Azeroth', idOf);
+		expect(wdt.tileCount).toBeGreaterThan(600);
+		expect(storage.pathOf(wdt.tiles[48 * 64 + 32]!.files.root)).toBe(adtPath('Azeroth', 32, 48));
+		const { root, tex } = parseVanillaAdt(await storage.readFile(idOf(adtPath('Azeroth', 32, 48))), idOf);
+		expect(root.chunks).toHaveLength(256);
+		// Every texture it names is in the client, and every chunk has at least its base layer.
+		expect(tex.diffuse.length).toBeGreaterThan(3);
+		expect(tex.diffuse.every((id) => storage.status(id) === 'ok')).toBe(true);
+		expect(tex.chunks.every((c) => c.layers.length >= 1 && c.alpha.length === c.layers.length - 1)).toBe(true);
+		// Northshire sits a few hundred yards up, with its stream as water.
+		const heights = root.chunks.flatMap((c) => [...c.heights]);
+		expect(Math.min(...heights)).toBeGreaterThan(50);
+		expect(Math.max(...heights)).toBeLessThan(600);
+		expect(root.liquids.length).toBeGreaterThan(10);
+		expect(root.liquids.every((l) => l.type === 1 && l.heights!.length === 81)).toBe(true);
+	}, 60000);
+});

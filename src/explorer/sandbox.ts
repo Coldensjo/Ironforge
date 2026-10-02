@@ -21,6 +21,8 @@ export const SANDBOX_HEIGHT = 20;
 
 /** Elwynn Forest's base grass (tileset/elwynn/elwynngrassbase_s.blp) and the grass that grows on it. */
 const GRASS = { diffuse: 187127, effect: 762, repeats: 8 };
+/** The same texture in the original (1.12) client, by its path there. */
+export const SANDBOX_GRASS_PATH = 'Tileset/Elwynn/ElwynnGrassBase.blp';
 /** About the grass texture's colour, for the low-detail view and the minimap. */
 const GRASS_COLOR: [number, number, number] = [86, 112, 44];
 
@@ -73,10 +75,10 @@ export function sandboxRoot(x: number, y: number): AdtRoot {
 	return { chunks, chunkIds: ['MCNK'], hasWater: false, liquids: [] };
 }
 
-/** The tile's texture layers: grass everywhere, one layer per chunk. */
-export function sandboxTex(): AdtTex {
+/** The tile's texture layers: grass everywhere, one layer per chunk (grass: its file, if not the modern client's). */
+export function sandboxTex(grass = GRASS.diffuse): AdtTex {
 	return {
-		diffuse: [GRASS.diffuse],
+		diffuse: [grass],
 		height: [0],
 		params: [{ repeats: GRASS.repeats, heightScale: 0, heightOffset: 1 }],
 		chunks: Array.from({ length: CHUNKS_PER_TILE * CHUNKS_PER_TILE }, () => ({ layers: [{ texture: 0, flags: 0, effect: GRASS.effect }], alpha: [] })),

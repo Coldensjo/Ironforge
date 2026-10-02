@@ -1,4 +1,4 @@
-import type { CascStorage } from '../casc/storage';
+import type { GameStorage } from '../casc/storage';
 import { DB2_FILES, loadTable } from './clientDb';
 
 /** A place to go to by name: a zone with its extent, or a town or landmark on the world map. */
@@ -36,7 +36,7 @@ const POI_MAP = 13;
 const POI_SHOWN = 0x4;
 
 /** Zones from the world map's layout (UiMapAssignment) and towns and landmarks from AreaPOI. */
-export async function loadPlaces(storage: CascStorage): Promise<Place[]> {
+export async function loadPlaces(storage: GameStorage): Promise<Place[]> {
 	const [uiMaps, assignments, pois] = await Promise.all([
 		loadTable(storage, DB2_FILES.UiMap),
 		loadTable(storage, DB2_FILES.UiMapAssignment),

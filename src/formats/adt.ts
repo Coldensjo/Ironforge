@@ -35,13 +35,13 @@ export interface AdtRoot {
 const FLAG_HIGH_RES_HOLES = 0x10000;
 
 /** The 2-bit-per-cell dominant layer map (MCNK +0x40), lowest bits first. */
-function readEffectLayers(bytes: Uint8Array, header: number): Uint8Array {
+export function readEffectLayers(bytes: Uint8Array, header: number): Uint8Array {
 	const layers = new Uint8Array(64);
 	for (let i = 0; i < 64; i++) layers[i] = (bytes[header + 0x40 + (i >> 2)] >> ((i & 3) * 2)) & 3;
 	return layers;
 }
 
-function readHoles(view: DataView, header: number): Uint8Array {
+export function readHoles(view: DataView, header: number): Uint8Array {
 	const holes = new Uint8Array(8);
 	const flags = view.getUint32(header, true);
 	if (flags & FLAG_HIGH_RES_HOLES) {

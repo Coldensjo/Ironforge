@@ -1,6 +1,6 @@
 import { BufferAttribute, BufferGeometry } from 'three';
 import { MeshBVH } from 'three-mesh-bvh';
-import type { CascStorage } from '../casc/storage';
+import type { GameStorage } from '../casc/storage';
 import { chunks } from '../formats/chunks';
 import { Blend, M2_MATERIAL_TWO_SIDED, M2_MATERIAL_UNFOGGED, M2_MATERIAL_UNLIT, parseM2, parseSkin, type M2File, type M2Skin } from '../formats/m2';
 import {
@@ -253,7 +253,7 @@ const POSE_FALLBACKS: Record<number, number[]> = {
  * The sequence for a pose, reading its .anim file when it has one. Lying dead falls back to
  * the end of Death (falling over), held. Null when the model has none of them: then it stands.
  */
-async function poseSequence(storage: CascStorage, bytes: Uint8Array, md20: number, pose: number): Promise<{ seq: Sequence; hold?: number } | null> {
+async function poseSequence(storage: GameStorage, bytes: Uint8Array, md20: number, pose: number): Promise<{ seq: Sequence; hold?: number } | null> {
 	const find = async (id: number) => {
 		const file = animationFile(bytes, md20, id);
 		if (file && storage.status(file) !== 'ok') return null;
@@ -282,7 +282,7 @@ const preparedM2 = new Map<string, Promise<PreparedM2>>();
 const PREPARED_M2_LIMIT = 600;
 
 /** file: the M2's bytes, when the caller has already read them. */
-function prepareM2(storage: CascStorage, fdid: number, stand: boolean, file?: Uint8Array, pose = 0): Promise<PreparedM2> {
+function prepareM2(storage: GameStorage, fdid: number, stand: boolean, file?: Uint8Array, pose = 0): Promise<PreparedM2> {
 	const key = `${fdid}:${stand ? 1 : 0}:${pose}`;
 	let entry = preparedM2.get(key);
 	if (entry) {
@@ -391,7 +391,7 @@ function dressM2(prepared: PreparedM2, options: M2Options) {
 
 const brokenGear = new Set<number>();
 
-export async function loadM2(storage: CascStorage, fdid: number, options: M2Options = {}, file?: Uint8Array): Promise<ModelData> {
+export async function loadM2(storage: GameStorage, fdid: number, options: M2Options = {}, file?: Uint8Array): Promise<ModelData> {
 	const prepared = await prepareM2(storage, fdid, !!options.stand, file, options.stand ? options.pose ?? 0 : 0);
 	const animated = prepared.animation !== null;
 	// rest: where the part sits in the resting pose, for its particle emitters.
@@ -493,7 +493,7 @@ export async function loadM2(storage: CascStorage, fdid: number, options: M2Opti
 	};
 }
 /** file: the root file's bytes, when the caller has already read them. */
-export async function loadWmo(storage: CascStorage, fdid: number, kindOf: (type: number) => LiquidKind, file?: Uint8Array): Promise<ModelData> {
+export async function loadWmo(storage: GameStorage, fdid: number, kindOf: (type: number) => LiquidKind, file?: Uint8Array): Promise<ModelData> {
 	const root = parseWmoRoot(file ?? await storage.readFile(fdid));
 	const groups = visibleWmoGroups(await Promise.all(root.groupFdids.map(async (g) => {
 		try {

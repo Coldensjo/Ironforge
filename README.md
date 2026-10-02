@@ -4,6 +4,8 @@ A world editor for World of Warcraft Classic: move, place, pose and delete NPCs,
 
 Work happens in **projects**. The launcher opens your last one, starts a new one (in the **sandbox**, a large field of grass to build on, or in **Azeroth**, the game's own world), or opens a saved one; File has New, Open, Save (Ctrl+S) and Save As (Ctrl+Shift+S). The desktop app saves projects as `.ironforge` files; the browser keeps them in its own storage, and can open project files too.
 
+It also opens the **original 1.12.1 client** (the one VMaNGOS and CMaNGOS servers use): point it at the client's folder (in the dev server, `WOW_DIR=<folder>`) and its maps load from its own MPQ archives, patches included. So far that's the ground, its textures and water; models, lighting and zone names from the original client come next.
+
 Fly over the World of Warcraft world, drawn from your own game install. Everything is read straight from the game files on your computer; nothing is hosted, uploaded or downloaded.
 
 Built for WoW Classic, with Eastern Kingdoms and Kalimdor loaded as one seamless world.

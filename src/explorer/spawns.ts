@@ -1,4 +1,4 @@
-import type { CascStorage } from '../casc/storage';
+import type { GameStorage } from '../casc/storage';
 import { TILE_SIZE } from '../formats/adt';
 import type { Db2 } from '../formats/db2';
 import { loadTable } from './clientDb';
@@ -285,7 +285,7 @@ export class DisplayResolver {
 		materials: Map<number, number>;
 	}> | null = null;
 
-	constructor(private readonly storage: CascStorage) {}
+	constructor(private readonly storage: GameStorage) {}
 
 	private load() {
 		this.tables ??= (async () => {

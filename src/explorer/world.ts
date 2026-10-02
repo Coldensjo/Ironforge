@@ -9,7 +9,10 @@ import { buildLiquidMeshes, type LiquidMesh } from './liquidMesh';
 import { MusicTables, type MusicData, type WmoArea } from './music';
 import type { MapExplorer } from './maps';
 import { loadPlaces, type Place } from './places';
-import { KNOWN_MAPS } from './maps';
+import type { KnownMap } from './maps';
+import { parseVanillaAdt } from '../formats/vanilla';
+import { liquidKind } from '../formats/mh2o';
+import { VanillaStorage } from '../mpq/vanillaStorage';
 import { globalWmoPlacement, globalWmoTiles, loadM2, loadWmo, parsePlacements, type ModelData, type ObjectKind, type Placement } from './objects';
 import { GroundEffects, type ClutterSource } from './groundEffects';
 import { PortalSource } from './portals';
@@ -32,7 +35,7 @@ export interface TemplateListing {
 }
 import { buildSplatTerrain, type SplatTerrain } from './splatMesh';
 import {
-	isSandbox, SANDBOX_MAP_ID, sandboxFarTile, sandboxHasTile, sandboxRoot, sandboxTex, sandboxTileTexture, sandboxTiles,
+	isSandbox, SANDBOX_GRASS_PATH, SANDBOX_MAP_ID, sandboxFarTile, sandboxHasTile, sandboxRoot, sandboxTex, sandboxTileTexture, sandboxTiles,
 } from './sandbox';
 import { buildTerrainMesh, type TerrainGeometry } from './terrainMesh';
 
@@ -128,7 +131,7 @@ export class WorldLoader {
 	/** The Map.db2 ID of a map's WDT, or null for a WDT no map uses. */
 	private async mapIdOf(wdtFdid: number): Promise<number | null> {
 		if (isSandbox(wdtFdid)) return SANDBOX_MAP_ID;
-		const known = KNOWN_MAPS.find((m) => m.wdt === wdtFdid);
+		const known = this.maps.knownMaps().find((m) => m.wdt === wdtFdid);
 		if (known) return known.mapId;
 		this.mapIds ??= loadTable(this.storage, DB2_FILES.Map).then((table) => {
 			const byWdt = new Map<number, number>();
@@ -175,7 +178,7 @@ export class WorldLoader {
 		for (const id of table.ids()) {
 			const wdt = table.getInt(id, MAP_WDT) ?? 0;
 			if (!wdt || this.storage.status(wdt) !== 'ok') continue;
-			const known = KNOWN_MAPS.find((m) => m.mapId === id);
+			const known = this.maps.knownMaps().find((m) => m.mapId === id);
 			out.push({
 				id,
 				name: known?.name ?? table.getString(id, MAP_NAME) ?? `Map ${id}`,
@@ -214,6 +217,8 @@ export class WorldLoader {
 		const wdt = await this.maps.wdt(wdtFdid);
 		const tile = wdt.tiles[y * 64 + x];
 		if (!tile) throw new Error(`Map has no tile ${x}_${y}`);
+		// The original client: one file per tile, holding the ground and its texture layers.
+		if (this.storage instanceof VanillaStorage) return this.vanillaNearTile(tile.files.root, x, y);
 		const [rootBytes, texBytes, kindOf, groundEffects] = await Promise.all([
 			this.storage.readFile(tile.files.root),
 			tile.files.tex0 ? this.storage.readFile(tile.files.tex0).catch(() => null) : null,
@@ -255,11 +260,29 @@ export class WorldLoader {
 		};
 	}
 
+	/** A tile of an original (1.12) client's map, from its single ADT. Water and objects come later. */
+	private async vanillaNearTile(adt: number, x: number, y: number): Promise<NearTile> {
+		const storage = this.storage as VanillaStorage;
+		const { root, tex } = parseVanillaAdt(await storage.readFile(adt), (p) => storage.idOf(p));
+		const terrain = buildSplatTerrain(root, tex);
+		const groundEffects = await this.groundEffects();
+		const clutter = groundEffects?.source(root, tex, terrain.heights, tileGrids(root).inner, terrain.holes) ?? null;
+		const areaIds = new Uint32Array(256);
+		for (const c of root.chunks) areaIds[c.indexY * 16 + c.indexX] = c.areaId;
+		// Its liquids are numbered 1-4 (water, ocean, magma, slime); the open sea is the shared sea surface.
+		const sea = new Uint8Array(256);
+		for (const l of root.liquids) if (liquidKind(l.type) === 'ocean') sea[l.chunk] = 1;
+		return {
+			x, y, terrain, fallback: null, heights: terrain.heights, holes: terrain.holes, liquids: buildLiquidMeshes(root.liquids, liquidKind),
+			sea, areaIds, clutter, flow: null,
+		};
+	}
+
 	/** A tile of the sandbox's field, built as a read ADT would be (with the grass that grows on it). */
 	private async sandboxNearTile(x: number, y: number): Promise<NearTile> {
 		if (!sandboxHasTile(x, y)) throw new Error(`The sandbox has no tile ${x}_${y}`);
 		const root = sandboxRoot(x, y);
-		const tex = sandboxTex();
+		const tex = this.storage instanceof VanillaStorage ? sandboxTex(this.storage.idOf(SANDBOX_GRASS_PATH)) : sandboxTex();
 		const terrain = buildSplatTerrain(root, tex);
 		const groundEffects = await this.groundEffects();
 		const clutter = groundEffects?.source(root, tex, terrain.heights, tileGrids(root).inner, terrain.holes) ?? null;
@@ -391,6 +414,11 @@ export class WorldLoader {
 				return null;
 			}
 		}));
+	}
+
+	/** The continents, with their files' numbers in the storage open. */
+	knownMaps(): KnownMap[] {
+		return this.maps.knownMaps();
 	}
 
 	async loadLighting(mapIds: number[]): Promise<LightingData> {
