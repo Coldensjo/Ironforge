@@ -2,6 +2,7 @@ import { parseAdtRoot, TILE_CELLS, TILE_SIZE, tileGrids } from '../formats/adt';
 import { parseAdtTex } from '../formats/adtTex';
 import { blpTexture, decodeBlp, type Image, type TextureData } from '../formats/blp';
 import type { LiquidKind } from '../formats/mh2o';
+import type { WdtTile } from '../formats/wdt';
 import { parseWdl, WDL_CELLS } from '../formats/wdl';
 import { DB2_FILES, liquidKinds, liquidLooks, loadTable, lockKinds, type LiquidLooks, type LockKind } from './clientDb';
 import { loadAreas, loadLighting, type AreaInfo, type LightingData } from './lighting';
@@ -10,7 +11,7 @@ import { MusicTables, type MusicData, type WmoArea } from './music';
 import type { MapExplorer } from './maps';
 import { loadPlaces, type Place } from './places';
 import type { KnownMap } from './maps';
-import { parseVanillaAdt } from '../formats/vanilla';
+import { parseVanillaAdt, vanillaModelNames } from '../formats/vanilla';
 import { liquidKind } from '../formats/mh2o';
 import { VanillaStorage } from '../mpq/vanillaStorage';
 import { globalWmoPlacement, globalWmoTiles, loadM2, loadWmo, parsePlacements, type ModelData, type ObjectKind, type Placement } from './objects';
@@ -299,7 +300,7 @@ export class WorldLoader {
 		const wdt = await this.maps.wdt(wdtFdid);
 		const tile = wdt.tiles[y * 64 + x];
 		const [placements, spawns, portals] = await Promise.all([
-			tile?.files.obj0 ? this.storage.readFile(tile.files.obj0).then(parsePlacements) : ([] as Placement[]),
+			this.tilePlacements(tile?.files),
 			this.tileSpawns(wdtFdid, x, y),
 			this.tilePortals(wdtFdid, x, y),
 		]);
@@ -309,6 +310,17 @@ export class WorldLoader {
 		// Spawn placements are cached per tile; send copies of their matrices, since the
 		// transfer to the main thread empties the originals.
 		return placements.concat(spawns.map((p) => ({ ...p, matrix: p.matrix.slice() })), portals);
+	}
+
+	/** The models a tile's map files place: from its _obj0 file, or the original client's one ADT. */
+	private async tilePlacements(files: WdtTile['files'] | undefined): Promise<Placement[]> {
+		const storage = this.storage;
+		if (storage instanceof VanillaStorage) {
+			if (!files?.root) return [];
+			const bytes = await storage.readFile(files.root);
+			return parsePlacements(bytes, vanillaModelNames(bytes, (path) => storage.idOf(path)));
+		}
+		return files?.obj0 ? parsePlacements(await storage.readFile(files.obj0)) : [];
 	}
 
 	private portalSource: Promise<PortalSource> | null = null;

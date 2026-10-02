@@ -98,3 +98,41 @@ describe.skipIf(!existsSync(join(VANILLA, 'Data', 'terrain.MPQ')))('vanilla map 
 		expect(root.liquids.every((l) => l.type === 1 && l.heights!.length === 81)).toBe(true);
 	}, 60000);
 });
+
+describe.skipIf(!existsSync(join(VANILLA, 'Data', 'model.MPQ')))('vanilla models', () => {
+	it("places Northshire's props and buildings, and reads them", async () => {
+		const { MpqStorage } = await import('../src/mpq/storage');
+		const { VanillaStorage } = await import('../src/mpq/vanillaStorage');
+		const { adtPath, vanillaModelNames } = await import('../src/formats/vanilla');
+		const { loadM2, loadWmo, parsePlacements } = await import('../src/explorer/objects');
+		const storage = new VanillaStorage(await MpqStorage.open(new NodeSource(VANILLA)));
+		const idOf = (p: string) => storage.idOf(p);
+		const bytes = await storage.readFile(idOf(adtPath('Azeroth', 32, 48)));
+		const placements = parsePlacements(bytes, vanillaModelNames(bytes, idOf));
+		const m2s = placements.filter((p) => p.kind === 'm2');
+		const wmos = placements.filter((p) => p.kind === 'wmo');
+		expect(m2s.length).toBeGreaterThan(700);
+		expect(wmos.length).toBe(8);
+		// Every model placed is in the client.
+		expect(placements.every((p) => storage.status(p.fdid) === 'ok')).toBe(true);
+
+		// Each kind of prop reads, with textures where it names them.
+		let textured = 0;
+		for (const fdid of new Set(m2s.map((p) => p.fdid))) {
+			const model = await loadM2(storage, fdid);
+			expect(model.indices.length, storage.pathOf(fdid)).toBeGreaterThan(0);
+			expect(model.radius).toBeGreaterThan(0);
+			if (model.batches.some((b) => b.material.texture && storage.status(b.material.texture) === 'ok')) textured++;
+		}
+		expect(textured).toBeGreaterThan(new Set(m2s.map((p) => p.fdid)).size * 0.8);
+
+		// The abbey: its groups, textures and furnishings.
+		const abbey = wmos.find((p) => /nsabbey\.wmo$/i.test(storage.pathOf(p.fdid)!))!;
+		const model = await loadWmo(storage, abbey.fdid, () => 'water');
+		expect(model.indices.length).toBeGreaterThan(1000);
+		expect(model.batches.every((b) => storage.status(b.material.texture) === 'ok')).toBe(true);
+		const doodads = model.doodadSets!.flatMap((s) => s.doodads);
+		expect(doodads.length).toBeGreaterThan(10);
+		expect(doodads.every((d) => storage.status(d.fdid) === 'ok')).toBe(true);
+	}, 120000);
+});

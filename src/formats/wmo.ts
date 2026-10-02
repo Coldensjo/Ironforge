@@ -1,4 +1,5 @@
 import { chunks, type Chunk } from './chunks';
+import { modelPath } from './vanilla';
 
 export const WMO_MATERIAL_UNLIT = 0x1;
 export const WMO_MATERIAL_UNFOGGED = 0x2;
@@ -89,18 +90,42 @@ export const WMO_LIQUID_CELL = 1600 / 3 / 128;
 
 const decoder = new TextDecoder();
 
-export function parseWmoRoot(bytes: Uint8Array): WmoRoot {
+/**
+ * How the original client's (1.12) WMOs name their files: the root's own path (its groups are
+ * <root>_000.wmo and on), and a path's number in its storage.
+ */
+export interface WmoNames {
+	path: string;
+	idOf: (path: string) => number;
+}
+
+/** The zero-terminated name at an offset in a names chunk (MOTX, MODN). */
+function nameAt(bytes: Uint8Array, chunk: Chunk | undefined, offset: number): string {
+	if (!chunk || offset >= chunk.size) return '';
+	const from = chunk.offset + offset;
+	const end = bytes.indexOf(0, from);
+	return decoder.decode(bytes.subarray(from, end < 0 || end > chunk.offset + chunk.size ? chunk.offset + chunk.size : end));
+}
+
+/** names: for the original client's files, which name their groups, textures and doodads rather than number them. */
+export function parseWmoRoot(bytes: Uint8Array, names?: WmoNames): WmoRoot {
 	const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 	const find = new Map<string, Chunk>();
 	for (const c of chunks(bytes)) if (!find.has(c.id)) find.set(c.id, c);
-	const hasMotx = (find.get('MOTX')?.size ?? 0) > 0;
+	const motx = find.get('MOTX');
+	const hasMotx = !names && (motx?.size ?? 0) > 0;
 
 	const materials: WmoMaterial[] = [];
 	const momt = find.get('MOMT');
 	if (momt) {
 		for (let i = 0; i < momt.size / 64; i++) {
 			const o = momt.offset + i * 64;
-			materials.push({ flags: view.getUint32(o, true), shader: view.getUint32(o + 4, true), blend: view.getUint32(o + 8, true), texture: view.getUint32(o + 12, true) });
+			let texture = view.getUint32(o + 12, true);
+			if (names) {
+				const name = nameAt(bytes, motx, texture);
+				texture = name ? names.idOf(name) : 0;
+			}
+			materials.push({ flags: view.getUint32(o, true), shader: view.getUint32(o + 4, true), blend: view.getUint32(o + 8, true), texture });
 		}
 	}
 
@@ -112,6 +137,10 @@ export function parseWmoRoot(bytes: Uint8Array): WmoRoot {
 	const gfid = find.get('GFID');
 	// GFID lists LOD0 groups first; further entries are lower-detail versions.
 	const groupFdids = gfid ? Array.from({ length: Math.min(nGroups, gfid.size / 4) }, (_, i) => view.getUint32(gfid.offset + i * 4, true)) : [];
+	if (names && !gfid) {
+		const stem = names.path.replace(/\.wmo$/i, '');
+		for (let i = 0; i < nGroups; i++) groupFdids.push(names.idOf(`${stem}_${String(i).padStart(3, '0')}.wmo`));
+	}
 
 	const doodadSets: WmoRoot['doodadSets'] = [];
 	const mods = find.get('MODS');
@@ -127,14 +156,17 @@ export function parseWmoRoot(bytes: Uint8Array): WmoRoot {
 	const modi = find.get('MODI');
 	const ids = modi ? Array.from({ length: modi.size / 4 }, (_, i) => view.getUint32(modi.offset + i * 4, true)) : [];
 	const doodads: WmoDoodad[] = [];
+	const modn = find.get('MODN');
 	const modd = find.get('MODD');
 	if (modd) {
 		for (let i = 0; i < modd.size / 40; i++) {
 			const o = modd.offset + i * 40;
 			const nameIndex = view.getUint32(o, true) & 0xffffff;
 			const fl = (k: number) => view.getFloat32(o + k, true);
+			// The original client's doodads are named, as offsets into MODN (and as .mdx or .mdl files, now .m2).
+			const name = names ? nameAt(bytes, modn, nameIndex) : '';
 			doodads.push({
-				fdid: ids[nameIndex] ?? 0,
+				fdid: names ? (name ? names.idOf(modelPath(name)) : 0) : ids[nameIndex] ?? 0,
 				position: [fl(4), fl(8), fl(12)],
 				rotation: [fl(16), fl(20), fl(24), fl(28)],
 				scale: fl(32),

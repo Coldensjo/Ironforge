@@ -2,7 +2,7 @@ import { BufferAttribute, BufferGeometry } from 'three';
 import { MeshBVH } from 'three-mesh-bvh';
 import type { GameStorage } from '../casc/storage';
 import { chunks } from '../formats/chunks';
-import { Blend, M2_MATERIAL_TWO_SIDED, M2_MATERIAL_UNFOGGED, M2_MATERIAL_UNLIT, parseM2, parseSkin, type M2File, type M2Skin } from '../formats/m2';
+import { Blend, M2_MATERIAL_TWO_SIDED, M2_MATERIAL_UNFOGGED, M2_MATERIAL_UNLIT, parseM2, parseSkin, parseVanillaM2, type M2File, type M2Skin } from '../formats/m2';
 import {
 	animationFile, animationIds, attachmentPoints, findSequence, loopAnimation, poseAt, skinVertex, standAnimation, standPose,
 	type AnimationClip, type AttachmentPoint, type BoneAnimation, type Sequence,
@@ -14,6 +14,7 @@ import {
 import type { LiquidKind } from '../formats/mh2o';
 import { TILE_SIZE } from '../formats/adt';
 import type { WdtGlobalWmo } from '../formats/wdt';
+import { VanillaStorage } from '../mpq/vanillaStorage';
 import type { LiquidMesh } from './liquidMesh';
 import type { SpawnInfo, SpawnMovement } from './spawns';
 import { compose, fromQuaternion, multiply, rotationX, rotationY, rotationZ, scaling, translation, type Mat4 } from './mat4';
@@ -154,8 +155,11 @@ export function globalWmoTiles(wmo: WdtGlobalWmo): [number, number][] {
 	return tiles;
 }
 
-/** Reads M2 (MDDF) and WMO (MODF) placements from a tile's _obj0.adt. */
-export function parsePlacements(bytes: Uint8Array): Placement[] {
+/**
+ * Reads M2 (MDDF) and WMO (MODF) placements from a tile's _obj0.adt. names: for the original
+ * client's ADTs, which list models by name: each placement's name index -> the model's number.
+ */
+export function parsePlacements(bytes: Uint8Array, names?: { m2: number[]; wmo: number[] }): Placement[] {
 	const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 	const out: Placement[] = [];
 	const f = (o: number) => view.getFloat32(o, true);
@@ -163,10 +167,11 @@ export function parsePlacements(bytes: Uint8Array): Placement[] {
 		if (c.id === 'MDDF') {
 			for (let o = c.offset; o + 36 <= c.offset + c.size; o += 36) {
 				const flags = view.getUint16(o + 34, true);
-				if (!(flags & MDDF_FILE_ID)) continue;
+				if (!names && !(flags & MDDF_FILE_ID)) continue;
+				const id = view.getUint32(o, true);
 				out.push({
 					kind: 'm2',
-					fdid: view.getUint32(o, true),
+					fdid: names ? names.m2[id] ?? 0 : id,
 					uid: view.getUint32(o + 4, true),
 					matrix: placementMatrix(f(o + 8), f(o + 12), f(o + 16), f(o + 20), f(o + 24), f(o + 28), view.getUint16(o + 32, true) / 1024),
 					doodadSet: 0,
@@ -175,11 +180,12 @@ export function parsePlacements(bytes: Uint8Array): Placement[] {
 		} else if (c.id === 'MODF') {
 			for (let o = c.offset; o + 64 <= c.offset + c.size; o += 64) {
 				const flags = view.getUint16(o + 56, true);
-				if (!(flags & MODF_FILE_ID)) continue;
-				const scale = flags & MODF_HAS_SCALE ? view.getUint16(o + 62, true) / 1024 : 1;
+				if (!names && !(flags & MODF_FILE_ID)) continue;
+				const scale = !names && flags & MODF_HAS_SCALE ? view.getUint16(o + 62, true) / 1024 : 1;
+				const id = view.getUint32(o, true);
 				out.push({
 					kind: 'wmo',
-					fdid: view.getUint32(o, true),
+					fdid: names ? names.wmo[id] ?? 0 : id,
 					uid: view.getUint32(o + 4, true),
 					matrix: placementMatrix(f(o + 8), f(o + 12), f(o + 16), f(o + 20), f(o + 24), f(o + 28), scale),
 					doodadSet: view.getUint16(o + 58, true),
@@ -292,6 +298,7 @@ function prepareM2(storage: GameStorage, fdid: number, stand: boolean, file?: Ui
 		return entry;
 	}
 	entry = (async () => {
+		if (storage instanceof VanillaStorage) return prepareVanillaM2(storage, file ?? await storage.readFile(fdid));
 		// The whole file is only needed here, for the vertices and the pose; it isn't cached.
 		const { bytes, vertices, ...m2 } = parseM2(file ?? await storage.readFile(fdid));
 		if (!m2.skinFdids[0]) throw new Error(`M2 ${fdid} has no skin`);
@@ -345,6 +352,30 @@ function prepareM2(storage: GameStorage, fdid: number, stand: boolean, file?: Ui
 	preparedM2.set(key, entry);
 	if (preparedM2.size > PREPARED_M2_LIMIT) preparedM2.delete(preparedM2.keys().next().value!);
 	return entry;
+}
+
+/** An original-client (1.12) model, in its bind pose: its animation and particles aren't read yet. */
+function prepareVanillaM2(storage: VanillaStorage, file: Uint8Array): PreparedM2 {
+	const { m2: { bytes, vertices, ...m2 }, skin } = parseVanillaM2(file, (path) => storage.idOf(path));
+	const n = skin.vertexLookup.length;
+	const positions = new Float32Array(n * 3);
+	const normals = new Float32Array(n * 3);
+	const uvs = new Float32Array(n * 2);
+	const v = new DataView(vertices.buffer, vertices.byteOffset, vertices.byteLength);
+	for (let i = 0; i < n; i++) {
+		const o = skin.vertexLookup[i] * 48;
+		if (o + 48 > vertices.length) continue;
+		for (let k = 0; k < 3; k++) {
+			positions[i * 3 + k] = v.getFloat32(o + k * 4, true);
+			normals[i * 3 + k] = v.getFloat32(o + 20 + k * 4, true);
+		}
+		uvs[i * 2] = v.getFloat32(o + 32, true);
+		uvs[i * 2 + 1] = v.getFloat32(o + 36, true);
+	}
+	return {
+		m2, skin, positions, normals, uvs, indices: Uint32Array.from(skin.indices),
+		attachments: new Map(), animation: null, boneIndex: null, boneWeight: null, emitters: [], animations: undefined,
+	};
 }
 
 /** Picks the batches a look shows (geosets, resolved runtime textures), as a standalone mesh. */
@@ -494,7 +525,9 @@ export async function loadM2(storage: GameStorage, fdid: number, options: M2Opti
 }
 /** file: the root file's bytes, when the caller has already read them. */
 export async function loadWmo(storage: GameStorage, fdid: number, kindOf: (type: number) => LiquidKind, file?: Uint8Array): Promise<ModelData> {
-	const root = parseWmoRoot(file ?? await storage.readFile(fdid));
+	// The original client names a building's files; its path leads to them.
+	const path = storage instanceof VanillaStorage ? storage.pathOf(fdid) : undefined;
+	const root = parseWmoRoot(file ?? await storage.readFile(fdid), path && storage instanceof VanillaStorage ? { path, idOf: (p) => storage.idOf(p) } : undefined);
 	const groups = visibleWmoGroups(await Promise.all(root.groupFdids.map(async (g) => {
 		try {
 			return parseWmoGroup(await storage.readFile(g));

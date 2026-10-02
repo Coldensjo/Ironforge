@@ -183,17 +183,25 @@ export function parseM2(bytes: Uint8Array): M2File {
 export function parseSkin(bytes: Uint8Array): M2Skin {
 	const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 	if (decoder.decode(bytes.subarray(0, 4)) !== 'SKIN') throw new Error('Not an M2 skin');
-	const vertices = arr(view, 0, 0x04);
-	const indices = arr(view, 0, 0x0c);
-	const submeshes = arr(view, 0, 0x1c);
-	const batches = arr(view, 0, 0x24);
+	return readSkin(view, 4, 48);
+}
+
+/**
+ * A skin profile whose arrays start at header (vertices, indices, bones, submeshes, batches);
+ * their offsets are from the start of the file. Submeshes grew from 32 bytes to 48 after 1.12.
+ */
+function readSkin(view: DataView, header: number, submeshSize: number): M2Skin {
+	const vertices = arr(view, 0, header);
+	const indices = arr(view, 0, header + 0x08);
+	const submeshes = arr(view, 0, header + 0x18);
+	const batches = arr(view, 0, header + 0x20);
 	const u16s = (a: { count: number; offset: number }) => {
 		const out = new Uint16Array(a.count);
 		for (let i = 0; i < a.count; i++) out[i] = view.getUint16(a.offset + i * 2, true);
 		return out;
 	};
 	const sections = Array.from({ length: submeshes.count }, (_, i) => {
-		const o = submeshes.offset + i * 48;
+		const o = submeshes.offset + i * submeshSize;
 		const level = view.getUint16(o + 2, true);
 		return { geoset: view.getUint16(o, true), indexStart: view.getUint16(o + 8, true) + (level << 16), indexCount: view.getUint16(o + 10, true) };
 	});
@@ -217,4 +225,90 @@ export function parseSkin(bytes: Uint8Array): M2Skin {
 		});
 	}
 	return { vertexLookup: u16s(vertices), indices: u16s(indices), batches: batchList };
+}
+
+/**
+ * Parses an original-client (1.12, version 256) model into the shape parseM2 and parseSkin give.
+ * Its header has extra arrays (playable animations, texture flipbooks) and holds its skins in the
+ * file; textures are named, and become numbers through idOf. Its animation tracks are laid out
+ * differently from the modern ones (28 bytes: interpolation, global sequence, ranges, times,
+ * values), so only static values are read here: the model is drawn in its bind pose.
+ */
+export function parseVanillaM2(bytes: Uint8Array, idOf: (path: string) => number): { m2: M2File; skin: M2Skin } {
+	const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+	if (decoder.decode(bytes.subarray(0, 4)) !== 'MD20') throw new Error('Not an M2 model');
+	const version = view.getUint32(4, true);
+	const vertices = arr(view, 0, 0x44);
+	const views = arr(view, 0, 0x4c);
+	const colors = arr(view, 0, 0x54);
+	const textures = arr(view, 0, 0x5c);
+	const weights = arr(view, 0, 0x64);
+	const transforms = arr(view, 0, 0x74);
+	const materials = arr(view, 0, 0x84);
+	const textureCombos = arr(view, 0, 0x94);
+	const weightCombos = arr(view, 0, 0xa4);
+	const transformCombos = arr(view, 0, 0xac);
+	const f = (o: number) => view.getFloat32(o, true);
+	if (!views.count) throw new Error('M2 has no skin');
+
+	const texList: M2Texture[] = [];
+	for (let i = 0; i < textures.count; i++) {
+		const o = textures.offset + i * 16;
+		const type = view.getUint32(o, true);
+		const flags = view.getUint32(o + 4, true);
+		const name = arr(view, 0, o + 8);
+		const path = type === 0 && name.count > 1 ? decoder.decode(bytes.subarray(name.offset, name.offset + name.count - 1)) : '';
+		texList.push({ type, fdid: path ? idOf(path) : 0, wrapX: !!(flags & TEXTURE_WRAP_X), wrapY: !!(flags & TEXTURE_WRAP_Y) });
+	}
+	const u16s = (a: { count: number; offset: number }) => Array.from({ length: a.count }, (_, i) => view.getUint16(a.offset + i * 2, true));
+	// A track's first value (fixed16 as 0-1), or null when it has none.
+	const firstFixed = (track: number) => {
+		const values = arr(view, 0, track + 20);
+		return values.count ? view.getInt16(values.offset, true) / 32767 : null;
+	};
+	const weightValues = Array.from({ length: weights.count }, (_, i) => firstFixed(weights.offset + i * 28) ?? 1);
+	// Texture transforms: three 28-byte tracks (translation, rotation, scale). Steady scrolling is
+	// the translation's change over the first sequence's keys, per second.
+	const scrollOf = (i: number): [number, number] | null => {
+		if (i >= transforms.count) return null;
+		const track = transforms.offset + i * 84;
+		const ranges = arr(view, 0, track + 4);
+		const times = arr(view, 0, track + 12);
+		const values = arr(view, 0, track + 20);
+		let first = 0;
+		let last = Math.min(times.count, values.count) - 1;
+		if (ranges.count) {
+			first = view.getUint32(ranges.offset, true);
+			last = Math.min(last, view.getUint32(ranges.offset + 4, true));
+		}
+		if (last - first < 1) return null;
+		const t0 = view.getUint32(times.offset + first * 4, true), t1 = view.getUint32(times.offset + last * 4, true);
+		if (t1 <= t0) return null;
+		const x = (k: number) => view.getFloat32(values.offset + k * 12, true);
+		const y = (k: number) => view.getFloat32(values.offset + k * 12 + 4, true);
+		const perSecond = 1000 / (t1 - t0);
+		return [(x(last) - x(first)) * perSecond, (y(last) - y(first)) * perSecond];
+	};
+
+	const m2: M2File = {
+		version,
+		bytes,
+		md20: 0,
+		vertices: bytes.subarray(vertices.offset, vertices.offset + vertices.count * 48),
+		vertexCount: vertices.count,
+		textures: texList,
+		materials: Array.from({ length: materials.count }, (_, i) => ({
+			flags: view.getUint16(materials.offset + i * 4, true),
+			blend: view.getUint16(materials.offset + i * 4 + 2, true),
+		})),
+		textureCombos: u16s(textureCombos),
+		transparency: u16s(weightCombos).map((w) => weightValues[w] ?? 1),
+		// Colours: a colour track then an alpha track, 28 bytes each.
+		colorAlpha: Array.from({ length: colors.count }, (_, i) => firstFixed(colors.offset + i * 56 + 28) ?? 1),
+		uvScroll: u16s(transformCombos).map(scrollOf),
+		skinFdids: [],
+		bounds: { min: [f(0xb4), f(0xb8), f(0xbc)], max: [f(0xc0), f(0xc4), f(0xc8)], radius: f(0xcc) },
+	};
+	// The first (most detailed) of the skins held in the file.
+	return { m2, skin: readSkin(view, views.offset, 32) };
 }

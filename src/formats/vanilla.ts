@@ -93,6 +93,31 @@ function names(bytes: Uint8Array, offset: number, size: number): string[] {
 	return new TextDecoder().decode(bytes.subarray(offset, offset + size)).split('\0').filter(Boolean);
 }
 
+/** A model's path as the client reads it: maps and WMOs name M2s as .mdx or .mdl files. */
+export const modelPath = (name: string) => name.replace(/\.md[lx]$/i, '.m2');
+
+/**
+ * The models a 1.12 ADT places, as numbers from idOf, by the index its placements use: M2s
+ * (MMDX names, MMID their offsets) and WMOs (MWMO, MWID). For parsePlacements.
+ */
+export function vanillaModelNames(bytes: Uint8Array, idOf: IdOf): { m2: number[]; wmo: number[] } {
+	const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+	const found = new Map<string, { offset: number; size: number }>();
+	for (const c of chunks(bytes)) if (!found.has(c.id)) found.set(c.id, c);
+	const list = (namesId: string, offsetsId: string, toPath: (name: string) => string) => {
+		const text = found.get(namesId);
+		const offsets = found.get(offsetsId);
+		if (!text || !offsets) return [];
+		return Array.from({ length: offsets.size / 4 }, (_, i) => {
+			const from = text.offset + view.getUint32(offsets.offset + i * 4, true);
+			const end = bytes.indexOf(0, from);
+			const name = new TextDecoder().decode(bytes.subarray(from, end < 0 ? text.offset + text.size : Math.min(end, text.offset + text.size)));
+			return name ? idOf(toPath(name)) : 0;
+		});
+	};
+	return { m2: list('MMDX', 'MMID', modelPath), wmo: list('MWMO', 'MWID', (name) => name) };
+}
+
 /**
  * A 1.12 ADT's ground: the chunks' heights and holes as the modern root parser gives them, and
  * their texture layers and alpha maps as the modern _tex0 parser does, with the textures (by
