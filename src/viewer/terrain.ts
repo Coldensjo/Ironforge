@@ -13,6 +13,7 @@ import { FAR_BATCH_LAYERS, FarBatch, type FarEntry } from './farBatch';
 import { perf } from './perf';
 import { useShadows } from './shadows';
 import { createTexture } from './textures';
+import { HeightTile, type HeightTargets, type LatticeBox } from './terrainEdit';
 
 /** Full-detail tiles load within this distance of the camera and unload beyond the drop distance. */
 const NEAR_LOAD_DISTANCE = 900;
@@ -60,6 +61,8 @@ interface TileState {
 	/** Chunks (y * 16 + x) the sea covers, from the tile's own ocean surfaces, once read in detail. */
 	seaChunks: Uint8Array | null;
 	nearLoading: boolean;
+	/** Its ground as the editor reshapes it, while detailed (made on first use). */
+	heightTile: HeightTile | null;
 	/** Its full-detail files couldn't be read: not tried again. */
 	nearFailed: boolean;
 	distance: number;
@@ -77,6 +80,8 @@ interface NearState {
 	sharedTextures: number[];
 	/** The tile's liquid surfaces (lakes, rivers, sea). */
 	liquids: THREE.Mesh[];
+	/** What the editor reshapes: the ground mesh and the heights read from it. */
+	ground: HeightTargets | null;
 }
 
 export interface TerrainStats {
@@ -142,6 +147,8 @@ export class TerrainManager {
 	private readonly layerTextures: TextureCache;
 	/** Ground clutter is handed each detailed tile's clutter map. */
 	clutter: ClutterManager | null = null;
+	/** The editor's height changes for a tile (by heightKey), applied as it loads in detail. */
+	heightDelta: (key: string) => Float32Array | undefined = () => undefined;
 
 	constructor(
 		private readonly storage: AsyncStorageApi,
@@ -155,6 +162,11 @@ export class TerrainManager {
 
 	private static objectKey(t: TileState): string {
 		return `${t.continent.wdt}:${t.x}_${t.y}`;
+	}
+
+	/** A tile's name for its height changes: map ID and tile. */
+	static heightKey(t: { continent: ContinentPlacement; x: number; y: number }): string {
+		return `${t.continent.mapId}:${t.x}_${t.y}`;
 	}
 
 	private static key(gx: number, gy: number): string {
@@ -214,6 +226,7 @@ export class TerrainManager {
 				areaIds: null,
 				seaChunks: null,
 				nearLoading: false,
+				heightTile: null,
 				nearFailed: false,
 				distance: Infinity,
 				objectLevel: 'none',
@@ -246,6 +259,7 @@ export class TerrainManager {
 				areaIds: null,
 				seaChunks: null,
 				nearLoading: false,
+				heightTile: null,
 				nearFailed: false,
 				distance: Infinity,
 				objectLevel: 'none',
@@ -507,6 +521,10 @@ export class TerrainManager {
 			// Kept after the tile drops back to low detail: it's what the map says, not a guess.
 			t.seaChunks = tile.sea;
 			this.clutter?.addTile(TerrainManager.objectKey(t), t.originX, t.originZ, tile.clutter);
+			if (near.ground) near.ground.clutter = tile.clutter;
+			// Ground the editor reshaped comes back as it was left.
+			const delta = this.heightDelta(TerrainManager.heightKey(t));
+			if (delta) this.reshape(t)?.setDelta(delta);
 			if (this.applySea(t)) this.sea!.texture.needsUpdate = true;
 			if (t.far) t.far.batch.setVisible(t.far.id, false);
 		} catch (e) {
@@ -520,7 +538,7 @@ export class TerrainManager {
 
 	/** originX, originZ: the tile's corner in the world, where it will be placed. */
 	private buildNear(tile: NearTile, textures: Map<number, THREE.Texture | null>, sharedTextures: number[], originX: number, originZ: number): NearState {
-		const state: NearState = { object: new THREE.Group(), geometries: [], materials: [], ownTextures: [], flowMaterials: [], sharedTextures, liquids: [] };
+		const state: NearState = { object: new THREE.Group(), geometries: [], materials: [], ownTextures: [], flowMaterials: [], sharedTextures, liquids: [], ground: null };
 		const add = (geometry: THREE.BufferGeometry, material: THREE.Material | THREE.Material[]) => {
 			const mesh = new THREE.Mesh(geometry, material);
 			mesh.matrixAutoUpdate = false;
@@ -540,13 +558,16 @@ export class TerrainManager {
 			});
 			state.materials.push(...materials);
 			add(geometry, materials);
+			state.ground = { geometry, queryHeights: tile.heights, clutter: null };
 		} else if (tile.fallback) {
 			const map = tile.fallback.texture ? createTexture(tile.fallback.texture, this.anisotropy) : null;
 			if (map) state.ownTextures.push(map);
 			const material = createFarMaterial(map ? 0xffffff : 0x5f6d48);
 			material.map = map;
 			state.materials.push(material);
-			add(toBufferGeometry(tile.fallback.geometry), material);
+			const geometry = toBufferGeometry(tile.fallback.geometry);
+			add(geometry, material);
+			state.ground = { geometry, queryHeights: tile.heights, clutter: null };
 		}
 
 		// The tile's river flow map, for its water surfaces (see bindFlow).
@@ -584,11 +605,55 @@ export class TerrainManager {
 		perf.record('near.drop', 0);
 		this.clutter?.removeTile(TerrainManager.objectKey(t));
 		t.near = null;
+		t.heightTile = null;
 		t.nearHeights = null;
 		t.nearHoles = null;
 		t.areaIds = null;
 		if (t.far) t.far.batch.setVisible(t.far.id, true);
 	}
+	/** A detailed tile's ground for the editor, made on first use; null if it isn't detailed. */
+	private reshape(t: TileState): HeightTile | null {
+		if (!t.near?.ground) return null;
+		t.heightTile ??= new HeightTile(TerrainManager.heightKey(t), t.originX, t.originZ, t.near.ground);
+		return t.heightTile;
+	}
+
+	/** The detailed tiles whose ground lies in a box of the world (x, z), ready to reshape. */
+	heightTilesIn(minX: number, minZ: number, maxX: number, maxZ: number): HeightTile[] {
+		const out: HeightTile[] = [];
+		for (let gy = Math.floor(minZ / TILE_SIZE); gy <= Math.floor(maxZ / TILE_SIZE); gy++) {
+			for (let gx = Math.floor(minX / TILE_SIZE); gx <= Math.floor(maxX / TILE_SIZE); gx++) {
+				const t = this.tiles.get(TerrainManager.key(gx, gy));
+				const tile = t && this.reshape(t);
+				if (tile) out.push(tile);
+			}
+		}
+		return out;
+	}
+
+	/**
+	 * Shows a tile's height changes again (after an undo, or new ones), if it's detailed; box
+	 * limits it to some of its lattice points. The ground clutter on it is scattered afresh.
+	 */
+	refreshHeights(key: string, box?: LatticeBox): void {
+		for (const t of this.tiles.values()) {
+			if (!t.near || TerrainManager.heightKey(t) !== key) continue;
+			const tile = this.reshape(t);
+			if (!tile) return;
+			tile.setDelta(this.heightDelta(key), box);
+			this.heightsChanged(tile);
+			return;
+		}
+	}
+
+	/** After a stroke: the mesh's bounds and the clutter catch up with the new ground. */
+	heightsChanged(tile: HeightTile): void {
+		tile.finish();
+		for (const t of this.tiles.values()) {
+			if (t.heightTile === tile) this.clutter?.heightsChanged(TerrainManager.objectKey(t));
+		}
+	}
+
 	private tileAt(x: number, z: number): TileState | undefined {
 		return this.tiles.get(TerrainManager.key(Math.floor(x / TILE_SIZE), Math.floor(z / TILE_SIZE)));
 	}

@@ -167,6 +167,14 @@ export class ClutterManager {
 		this.dirty = true;
 	}
 
+	/** A tile's ground was reshaped: its clutter is scattered again on the new heights. */
+	heightsChanged(key: string): void {
+		const tile = this.tiles.get(key);
+		if (!tile) return;
+		tile.chunks.clear();
+		this.dirty = true;
+	}
+
 	removeTile(key: string): void {
 		this.shotChunks.delete(key);
 		if (this.tiles.delete(key)) this.dirty = true;

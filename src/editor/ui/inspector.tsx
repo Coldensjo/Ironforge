@@ -122,10 +122,11 @@ export function Outliner({ ctx }: { ctx: EditorContext }) {
 	const { doc, viewport } = ctx;
 	void doc.version.value;
 	const rows = doc.list();
+	const ground = doc.terrainTiles();
 	const selected = new Set(doc.selection.value.map(spawnId));
 	return (
-		<Panel title={`Changes (${rows.length})`} class="ed-outliner">
-			{!rows.length && <p class="wow-muted ed-hint">Nothing changed yet. What you move, place or delete is listed here.</p>}
+		<Panel title={`Changes (${rows.length + ground.length})`} class="ed-outliner">
+			{!rows.length && !ground.length && <p class="wow-muted ed-hint">Nothing changed yet. What you move, place or delete is listed here.</p>}
 			<ul class="ed-list">
 				{rows.map(({ id, info, state }) => (
 					<li
@@ -143,6 +144,14 @@ export function Outliner({ ctx }: { ctx: EditorContext }) {
 						{state === 'deleted' && info && (
 							<button class="wow-button ed-small" onClick={(e) => { e.stopPropagation(); doc.revert([info]); }}>Restore</button>
 						)}
+					</li>
+				))}
+				{ground.map((tile) => (
+					<li key={tile} class="wow-row ed-row ed-change changed" title="Ground reshaped on this map tile">
+						<span class="ed-mark changed">~</span>
+						<Icon name="terrain" size={20} />
+						<span class="ed-row-name">Ground, tile {tile.split(':')[1].replace('_', ', ')}</span>
+						<button class="wow-button ed-small" onClick={() => doc.revertTerrain(tile)} title="Put this tile's ground back as the map has it">Restore</button>
 					</li>
 				))}
 			</ul>

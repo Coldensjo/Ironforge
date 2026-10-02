@@ -21,6 +21,7 @@ import { perf } from './perf';
 import { TerrainManager, type ContinentPlacement } from './terrain';
 import { GroundDistancePass } from './groundDistance';
 import { PostPass, type FogSettings } from './post';
+import { SelectionOutline } from './outline';
 import { installShadowGroups, setShadowLight } from './shadows';
 import { TerrainShadowPass } from './terrainShadow';
 import { animateFlipbooks, flipbooks, liquidKindOf, liquidMaterials, liquidTime, seaMask, setLiquidLooks, setLiquidsFromBelow } from './terrainMaterials';
@@ -263,6 +264,8 @@ export class Viewer {
 	private readonly controls: FlyControls;
 	private terrain!: TerrainManager;
 	private objects!: ObjectManager;
+	/** The stroke around the editor's selection. */
+	private outline: SelectionOutline | null = null;
 	/** Whether clicking the world shows what was clicked (the explorer); the editor turns it off. */
 	clicksSelect = true;
 	/** Called every frame, before the world updates (the editor's selection circles). */
@@ -546,6 +549,7 @@ export class Viewer {
 		// Compiles shaders in the background (KHR_parallel_shader_compile) before objects are shown.
 		const prepare = (object: THREE.Object3D, shadowPass?: boolean) => this.post.compileAsync(this.renderer, object, this.camera, this.scene, shadowPass);
 		this.objects = new ObjectManager(this.storage, this.usesCompressedTextures, anisotropy, prepare);
+		this.outline = new SelectionOutline(this.objects, this.post.depthTexture);
 		// Buildings (and the caves and mines built as buildings) are solid.
 		this.controls.collide = (from, move) => {
 			// Most of the time there's no building anywhere near; skip the ray casts then.
@@ -893,11 +897,15 @@ export class Viewer {
 			camera: this.camera,
 			scene: this.scene,
 			objects: this.objects,
+			outline: this.outline!,
 			mapPlacement: (mapId) => this.continents.find((c) => c.mapId === mapId) ?? this.loadedInstances.get(mapId) ?? null,
 			mapAt: (x, z) => this.terrain.locate(x, z)?.continent ?? null,
 			mapOfWdt: (wdt) => this.continents.find((c) => c.wdt === wdt) ?? [...this.loadedInstances.values()].find((c) => c.wdt === wdt) ?? null,
 			templateSpawn: (type, entry, mapId, guid) => this.storage.templateSpawn(type, entry, mapId, guid),
 			heightAt: (x, z) => this.terrain.heightAt(x, z),
+			heightTilesIn: (minX, minZ, maxX, maxZ) => this.terrain.heightTilesIn(minX, minZ, maxX, maxZ),
+			heightsChanged: (tile) => this.terrain.heightsChanged(tile),
+			refreshTerrain: (tile) => this.terrain.refreshHeights(tile),
 			lockLook: () => controls.lock(),
 			get looking() {
 				return controls.locked;
@@ -909,6 +917,11 @@ export class Viewer {
 				controls.flyTo(from, Math.atan2(-d.x, -d.z), Math.atan2(d.y, Math.hypot(d.x, d.z)), 0.8);
 			},
 		};
+	}
+
+	/** Where the terrain gets the editor's height changes for a tile as it loads in detail. */
+	set heightDeltas(fn: (key: string) => Float32Array | undefined) {
+		this.terrain.heightDelta = fn;
 	}
 
 	/** In edit mode, the camera only flies while the right mouse button is held (looking around). */
@@ -1107,6 +1120,7 @@ export class Viewer {
 		perf.time('terrainShadow', () => this.terrainShadow.update(this.renderer, this.terrain.group, pos, this.controls.altitude, this.sun.position, this.sun.shadow.camera.far, this.sun.castShadow ? this.shadowStrength : 0, now));
 		this.renderer.shadowMap.needsUpdate = (this.shadowFrame++ & 1) === 0;
 		perf.time('render', () => this.post.render(this.renderer, this.scene, this.camera));
+		if (this.outline) perf.time('outline', () => this.outline!.render(this.renderer, this.camera));
 		if (this.shot) this.updateShot(now);
 		perf.time('nameplates', () => this.updateNameplates(now));
 		if (this.mapLabels) {

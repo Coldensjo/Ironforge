@@ -303,13 +303,20 @@ const hudFollowers: (() => void)[] = [];
 /** Sets View settings from elsewhere (the editor's View menu): applied, shown and remembered. */
 let applyView: (next: Partial<ViewSettings>) => void = () => {};
 
+/**
+ * Grass and flowers are the explorer's setting; the editor has its own, off unless turned on,
+ * so they don't hide what's being placed. While editing, the explorer's waits here.
+ */
+const EDIT_CLUTTER_KEY = 'mapExplorer.editClutter';
+let exploreClutter: boolean | null = null;
+
 function setUpView(viewer: Viewer): void {
 	const panel = $('view-panel');
 	const { stats = false, ...settings } = readSaved<SavedView>(VIEW_KEY);
 	viewer.settings = settings;
 	const statsBox = $<HTMLInputElement>('stats-on');
 	const controls = [...panel.querySelectorAll<HTMLInputElement | HTMLSelectElement>('[data-setting]')];
-	const remember = () => save(VIEW_KEY, { ...viewer.settings, stats: statsBox.checked });
+	const remember = () => save(VIEW_KEY, { ...viewer.settings, clutter: exploreClutter ?? viewer.settings.clutter, stats: statsBox.checked });
 	const sync = () => {
 		const s = viewer.settings;
 		for (const c of controls) {
@@ -701,6 +708,7 @@ function setUpHighlights(viewer: Viewer): void {
 async function setUpWorkspaces(viewer: Viewer): Promise<void> {
 	const host = viewer.editorHost();
 	const doc = new EditDocument(host);
+	viewer.heightDeltas = (key) => doc.heightDelta(key);
 	const viewport = new EditorViewport(host, doc);
 	viewer.onFrame.push(() => viewport.update());
 	// For test scripts and the console while developing.
@@ -708,7 +716,13 @@ async function setUpWorkspaces(viewer: Viewer): Promise<void> {
 	mountEditor({
 		viewer, doc, viewport, storage,
 		hud: hudInfo,
-		settings: { get: () => viewer.settings, set: (next) => applyView(next) },
+		settings: {
+			get: () => viewer.settings,
+			set: ({ clutter, ...rest }) => {
+				if (clutter !== undefined) save(EDIT_CLUTTER_KEY, { on: clutter });
+				applyView(clutter === undefined ? rest : { ...rest, clutter });
+			},
+		},
 		minimap: $('minimap-wrap'),
 		notify,
 		copyLink: () => void copyLink(viewer),
@@ -717,6 +731,14 @@ async function setUpWorkspaces(viewer: Viewer): Promise<void> {
 	});
 	workspace.subscribe((w) => {
 		const editing = w === 'edit';
+		if (editing && exploreClutter === null) {
+			exploreClutter = viewer.settings.clutter;
+			applyView({ clutter: readSaved<{ on: boolean }>(EDIT_CLUTTER_KEY).on ?? false });
+		} else if (!editing && exploreClutter !== null) {
+			const clutter = exploreClutter;
+			exploreClutter = null;
+			applyView({ clutter });
+		}
 		viewer.clicksSelect = !editing;
 		viewer.flyOnlyWhileLooking = editing;
 		if (document.pointerLockElement) document.exitPointerLock();

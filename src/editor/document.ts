@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { TILE_SIZE } from '../formats/adt';
 import { spawnKind, spawnPlacement, type SpawnInfo, type SpawnType } from '../explorer/spawns';
 import type { ObjectManager } from '../viewer/objects';
+import { LATTICE_POINTS } from '../viewer/terrainEdit';
 import type { ContinentPlacement } from '../viewer/terrain';
 
 /**
@@ -25,9 +26,21 @@ export interface SpawnChange {
 	after: SpawnEdit | undefined;
 }
 
-/** One undoable step: every spawn it changed. */
+/**
+ * Ground heights a step changed on one tile (by its height key, map:x_y): the lattice points it
+ * touched, and their height changes (from the map's own heights) before and after.
+ */
+export interface TerrainPatch {
+	tile: string;
+	points: Uint32Array;
+	before: Float32Array;
+	after: Float32Array;
+}
+
+/** One undoable step: every spawn it changed, and any ground. */
 interface Step {
 	changes: SpawnChange[];
+	terrain?: TerrainPatch[];
 	/** Steps of the same gesture (wheel turns, nudges) fold into one. */
 	merge?: string;
 	time: number;
@@ -40,37 +53,45 @@ const FIRST_NEW_GUID = 9_000_000;
 /** The same for new copies of the map's own models, above any ADT placement's unique ID. */
 const FIRST_NEW_MODEL_ID = 1_000_000_000;
 const DB_NAME = 'mapExplorer';
-const DB_STORE = 'spawnEdits';
+/** Version 2 added the ground's height changes. */
+const DB_VERSION = 2;
+const DB_STORES = ['spawnEdits', 'terrainEdits'];
 const EXPORT_FORMAT = 'mapexplorer-spawn-edits';
 
-/** Edits saved in the browser (IndexedDB), so they're still there next visit. Without storage, they last the visit. */
-class EditStore {
-	private readonly db: Promise<IDBDatabase | null>;
+let database: Promise<IDBDatabase | null> | null = null;
 
-	constructor() {
-		this.db = new Promise((resolve) => {
-			try {
-				const request = indexedDB.open(DB_NAME, 1);
-				request.onupgradeneeded = () => request.result.createObjectStore(DB_STORE);
-				request.onsuccess = () => resolve(request.result);
-				request.onerror = () => resolve(null);
-			} catch {
-				resolve(null);
-			}
-		});
-	}
+/** The browser's database for edits (IndexedDB), with a store for each kind; null without storage. */
+function openDatabase(): Promise<IDBDatabase | null> {
+	database ??= new Promise((resolve) => {
+		try {
+			const request = indexedDB.open(DB_NAME, DB_VERSION);
+			request.onupgradeneeded = () => {
+				for (const name of DB_STORES) if (!request.result.objectStoreNames.contains(name)) request.result.createObjectStore(name);
+			};
+			request.onsuccess = () => resolve(request.result);
+			request.onerror = () => resolve(null);
+		} catch {
+			resolve(null);
+		}
+	});
+	return database;
+}
 
-	async all(): Promise<[string, SpawnEdit][]> {
-		const db = await this.db;
+/** Edits saved in the browser, so they're still there next visit. Without storage, they last the visit. */
+class EditStore<T> {
+	constructor(private readonly name: string) {}
+
+	async all(): Promise<[string, T][]> {
+		const db = await openDatabase();
 		if (!db) return [];
 		return new Promise((resolve) => {
-			const out: [string, SpawnEdit][] = [];
+			const out: [string, T][] = [];
 			try {
-				const request = db.transaction(DB_STORE).objectStore(DB_STORE).openCursor();
+				const request = db.transaction(this.name).objectStore(this.name).openCursor();
 				request.onsuccess = () => {
 					const cursor = request.result;
 					if (!cursor) return resolve(out);
-					out.push([String(cursor.key), cursor.value as SpawnEdit]);
+					out.push([String(cursor.key), cursor.value as T]);
 					cursor.continue();
 				};
 				request.onerror = () => resolve(out);
@@ -81,32 +102,47 @@ class EditStore {
 	}
 
 	/** Saves an edit; undefined forgets it. */
-	async put(id: string, edit: SpawnEdit | undefined): Promise<void> {
-		const db = await this.db;
+	async put(id: string, value: T | undefined): Promise<void> {
+		const db = await openDatabase();
 		if (!db) return;
 		try {
-			const store = db.transaction(DB_STORE, 'readwrite').objectStore(DB_STORE);
-			if (edit === undefined) store.delete(id);
-			else store.put(edit, id);
+			const store = db.transaction(this.name, 'readwrite').objectStore(this.name);
+			if (value === undefined) store.delete(id);
+			else store.put(value, id);
 		} catch (e) {
 			console.warn('Edit not saved:', e);
 		}
 	}
 
 	async clear(): Promise<void> {
-		const db = await this.db;
+		const db = await openDatabase();
 		try {
-			db?.transaction(DB_STORE, 'readwrite').objectStore(DB_STORE).clear();
+			db?.transaction(this.name, 'readwrite').objectStore(this.name).clear();
 		} catch (e) {
 			console.warn('Edits not cleared:', e);
 		}
 	}
 }
 
+/** Float32Array <-> base64, for ground in exported files. */
+function toBase64(values: Float32Array): string {
+	const bytes = new Uint8Array(values.buffer, values.byteOffset, values.byteLength);
+	let text = '';
+	for (let i = 0; i < bytes.length; i += 0x8000) text += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+	return btoa(text);
+}
+
+function fromBase64(text: string): Float32Array {
+	const bytes = Uint8Array.from(atob(text), (c) => c.charCodeAt(0));
+	return new Float32Array(bytes.buffer);
+}
+
 /** Where the document draws: the object manager and where each map lies in the world. */
 export interface DocumentHost {
 	objects: ObjectManager;
 	mapPlacement(mapId: number): ContinentPlacement | null;
+	/** Shows a tile's ground height changes again (if the tile is loaded in detail). */
+	refreshTerrain(tile: string): void;
 }
 
 /**
@@ -120,7 +156,10 @@ export class EditDocument {
 	private readonly previews = new Map<string, SpawnInfo>();
 	/** Spawns as the data has them, kept from when they were first picked or changed. */
 	private readonly originals = new Map<string, SpawnInfo>();
-	private readonly store = new EditStore();
+	private readonly store = new EditStore<SpawnEdit>('spawnEdits');
+	/** Ground height changes per tile (map:x_y), one per lattice point (see HeightTile). */
+	private readonly terrain = new Map<string, Float32Array>();
+	private readonly terrainStore = new EditStore<Float32Array>('terrainEdits');
 	private undoStack: Step[] = [];
 	private redoStack: Step[] = [];
 
@@ -130,7 +169,7 @@ export class EditDocument {
 	readonly selection = signal<SpawnInfo[]>([]);
 	readonly canUndo = signal(false);
 	readonly canRedo = signal(false);
-	readonly count = computed(() => (this.version.value, this.edits.size));
+	readonly count = computed(() => (this.version.value, this.edits.size + this.terrain.size));
 
 	constructor(private readonly host: DocumentHost) {}
 
@@ -140,6 +179,11 @@ export class EditDocument {
 			if (this.edits.has(id)) continue; // edited already, while loading
 			this.edits.set(id, edit);
 			this.draw(id, edit);
+		}
+		for (const [tile, delta] of await this.terrainStore.all()) {
+			if (this.terrain.has(tile) || delta.length !== LATTICE_POINTS) continue;
+			this.terrain.set(tile, delta);
+			this.host.refreshTerrain(tile);
 		}
 		this.changed();
 	}
@@ -264,6 +308,7 @@ export class EditDocument {
 		if (!step) return;
 		batch(() => {
 			for (const c of [...step.changes].reverse()) this.apply(c.id, c.before);
+			for (const t of step.terrain ?? []) this.applyTerrain(t, t.before);
 			this.redoStack.push(step);
 			this.refreshSelection();
 			this.changed();
@@ -275,10 +320,65 @@ export class EditDocument {
 		if (!step) return;
 		batch(() => {
 			for (const c of step.changes) this.apply(c.id, c.after);
+			for (const t of step.terrain ?? []) this.applyTerrain(t, t.after);
 			this.undoStack.push(step);
 			this.refreshSelection();
 			this.changed();
 		});
+	}
+
+	// --- Ground ---
+
+	/** A tile's ground height changes (by lattice point); with create, made if it has none yet. */
+	heightDelta(tile: string, create = false): Float32Array | undefined {
+		let delta = this.terrain.get(tile);
+		if (!delta && create) {
+			delta = new Float32Array(LATTICE_POINTS);
+			this.terrain.set(tile, delta);
+		}
+		return delta;
+	}
+
+	/**
+	 * Records ground already changed (a brush stroke wrote the deltas as it went) as a step,
+	 * and saves the tiles.
+	 */
+	commitTerrain(patches: TerrainPatch[]): void {
+		if (!patches.length) return;
+		this.undoStack.push({ changes: [], terrain: patches, time: performance.now() });
+		this.redoStack = [];
+		for (const p of patches) void this.terrainStore.put(p.tile, this.terrain.get(p.tile));
+		this.changed();
+	}
+
+	/** Puts a tile's ground back as the map has it, as a step. */
+	revertTerrain(tile: string): void {
+		const delta = this.terrain.get(tile);
+		if (!delta) return;
+		const points: number[] = [];
+		for (let i = 0; i < delta.length; i++) if (delta[i] !== 0) points.push(i);
+		const patch: TerrainPatch = { tile, points: Uint32Array.from(points), before: Float32Array.from(points, (i) => delta[i]), after: new Float32Array(points.length) };
+		this.applyTerrain(patch, patch.after);
+		this.commitTerrain([patch]);
+	}
+
+	/** Tiles whose ground has been reshaped, for the outliner. */
+	terrainTiles(): string[] {
+		return [...this.terrain.keys()];
+	}
+
+	/** Writes one side of a patch into a tile's deltas, shows it and saves it. */
+	private applyTerrain(patch: TerrainPatch, values: Float32Array): void {
+		const delta = this.heightDelta(patch.tile, true)!;
+		patch.points.forEach((p, k) => (delta[p] = values[k]));
+		// Nothing left changed: the tile is the map's own again.
+		if (delta.every((v) => v === 0)) {
+			this.terrain.delete(patch.tile);
+			void this.terrainStore.put(patch.tile, undefined);
+		} else {
+			void this.terrainStore.put(patch.tile, delta);
+		}
+		this.host.refreshTerrain(patch.tile);
 	}
 
 	/** A guid no spawn of this type on this map has. */
@@ -293,18 +393,27 @@ export class EditDocument {
 
 	/** Every edit, as a file to keep or share. */
 	exportJson(): string {
-		return JSON.stringify({ format: EXPORT_FORMAT, version: 1, edits: Object.fromEntries(this.edits) });
+		const terrain = Object.fromEntries([...this.terrain].map(([tile, delta]) => [tile, toBase64(delta)]));
+		return JSON.stringify({ format: EXPORT_FORMAT, version: 2, edits: Object.fromEntries(this.edits), terrain });
 	}
 
 	/** Adds the edits in a file made by exportJson; returns how many. Not undoable. */
 	importJson(text: string): number {
-		const file = JSON.parse(text) as { format?: string; edits?: Record<string, SpawnEdit> };
+		const file = JSON.parse(text) as { format?: string; edits?: Record<string, SpawnEdit>; terrain?: Record<string, string> };
 		if (file.format !== EXPORT_FORMAT || !file.edits) throw new Error('Not a MapExplorer edits file');
 		let n = 0;
 		batch(() => {
 			for (const [id, edit] of Object.entries(file.edits!)) {
 				if (edit !== null && (typeof edit !== 'object' || !edit.place)) continue;
 				this.apply(id, edit);
+				n++;
+			}
+			for (const [tile, data] of Object.entries(file.terrain ?? {})) {
+				const delta = fromBase64(data);
+				if (delta.length !== LATTICE_POINTS) continue;
+				this.terrain.set(tile, delta);
+				void this.terrainStore.put(tile, delta);
+				this.host.refreshTerrain(tile);
 				n++;
 			}
 			this.undoStack = [];
@@ -321,6 +430,10 @@ export class EditDocument {
 			for (const id of [...this.edits.keys(), ...this.previews.keys()]) this.draw(id, undefined);
 			this.edits.clear();
 			this.previews.clear();
+			const tiles = [...this.terrain.keys()];
+			this.terrain.clear();
+			for (const tile of tiles) this.host.refreshTerrain(tile);
+			void this.terrainStore.clear();
 			void this.store.clear();
 			this.undoStack = [];
 			this.redoStack = [];

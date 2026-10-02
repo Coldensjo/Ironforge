@@ -330,6 +330,11 @@ export class PostPass {
 		this.quadScene.add(this.quad);
 	}
 
+	/** The frame's depth, once drawn (read by the selection outline). */
+	get depthTexture(): THREE.DepthTexture {
+		return this.target.depthTexture!;
+	}
+
 	/** Whether the game's colour grading is applied. */
 	get gradingOn(): boolean {
 		return this.uniforms.uGrading.value > 0.5;

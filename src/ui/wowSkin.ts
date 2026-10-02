@@ -31,7 +31,7 @@ const UI = {
 	listHighlight: 136810, // interface/questframe/ui-questtitlehighlight
 	minimapBorder: 136468, // interface/minimap/ui-minimap-border
 	cursorPoint: 131028, // interface/cursor/point
-	cursorPickup: 131027, // interface/cursor/pickup
+	cursorGrab: 462987, // interface/cursor/openhand (pickup, 131027, is the vendor's buy/sell hand)
 	scrollKnob: 130849, // interface/buttons/ui-scrollbar-knob
 } as const;
 
@@ -62,6 +62,12 @@ export const ICONS = {
 	bone: 133718, // inv_misc_bone_01
 	book: 133734, // inv_misc_book_02
 	recent: 133647, // inv_misc_bag_14
+	// Terrain brushes.
+	terrain: 136248, // trade_mining
+	raise: 136025, // spell_nature_earthquake
+	lower: 134435, // inv_misc_shovel_01
+	flatten: 133038, // inv_hammer_01
+	smooth: 136022, // spell_nature_earthbind
 	// Creature types.
 	beast: 132203, // ability_hunter_pet_wolf
 	dragonkin: 134153, // inv_misc_head_dragon_01
@@ -197,7 +203,8 @@ export async function loadWowSkin(storage: AsyncStorageApi): Promise<boolean> {
 	if (tex.minimapBorder) set('minimap-ring', crop(tex.minimapBorder, 94, 32, 150, 150));
 	// The gauntlet, its point at the top left; the open hand while carrying something.
 	if (tex.cursorPoint) vars['--wow-cursor'] = `${url(tex.cursorPoint.toDataURL())} 1 1, default`;
-	if (tex.cursorPickup) vars['--wow-cursor-grab'] = `${url(tex.cursorPickup.toDataURL())} 8 8, grab`;
+	// The hand's palm, its middle.
+	if (tex.cursorGrab) vars['--wow-cursor-grab'] = `${url(tex.cursorGrab.toDataURL())} ${tex.cursorGrab.width >> 1} ${tex.cursorGrab.height >> 1}, grab`;
 
 	const root = document.documentElement;
 	for (const [name, value] of Object.entries(vars)) root.style.setProperty(name, value);

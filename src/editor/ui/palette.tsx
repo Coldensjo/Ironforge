@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'preact/hooks';
+import type { BrushKind } from '../sculpt';
 import { matchScore, searchKey } from '../../app/search';
 import { spawnFile } from '../../explorer/spawns';
 import { creatureIcon, type IconName } from '../../ui/wowSkin';
@@ -7,7 +8,7 @@ import { Check, Icon, Panel, Slot } from './common';
 import type { EditorContext } from './context';
 
 /** The palette's tabs: NPCs and game objects (VMaNGOS templates), the game's map models, and what was placed lately. */
-type Category = 'npc' | 'object' | 'nature' | 'props' | 'buildings' | 'effects' | 'recent';
+type Category = 'npc' | 'object' | 'nature' | 'props' | 'buildings' | 'effects' | 'terrain' | 'recent';
 
 const CATEGORIES: [Category, IconName, string][] = [
 	['npc', 'npc', 'NPCs and monsters'],
@@ -16,11 +17,12 @@ const CATEGORIES: [Category, IconName, string][] = [
 	['props', 'props', 'Props: furniture, barrels, lamps, signs…'],
 	['buildings', 'town', 'Buildings'],
 	['effects', 'effects', 'Effects: glows, smoke, particles'],
+	['terrain', 'terrain', 'Terrain: raise, lower, flatten and smooth the ground'],
 	['recent', 'recent', 'Placed lately'],
 ];
 
 interface Row extends Stamp {
-	category: Exclude<Category, 'recent'>;
+	category: Exclude<Category, 'recent' | 'terrain'>;
 	/** The group within the category: a creature or object type, or Trees, Furniture... */
 	group: string;
 	/** What it is, or where it's from. */
@@ -152,6 +154,11 @@ export function Palette({ ctx }: { ctx: EditorContext }) {
 	useEffect(() => {
 		void loadCatalog(ctx).then(setRows, () => setRows([]));
 	}, []);
+	// The sculpt tool (T) shows the terrain brushes; leaving them puts the move tool back.
+	const tool = ctx.viewport.tool.value;
+	useEffect(() => {
+		if (tool === 'sculpt') setCategory('terrain');
+	}, [tool]);
 
 	// What's in this category (minus later expansions' models unless asked), and its groups with counts.
 	const inCategory = useMemo(() => {
@@ -195,6 +202,13 @@ export function Palette({ ctx }: { ctx: EditorContext }) {
 	const pick = (c: Category) => {
 		setCategory(c);
 		setGroup(null);
+		if (c === 'terrain') {
+			ctx.viewport.cancel();
+			ctx.viewport.stamp.value = null;
+			ctx.viewport.tool.value = 'sculpt';
+		} else if (ctx.viewport.tool.value === 'sculpt') {
+			ctx.viewport.tool.value = 'move';
+		}
 	};
 	const models = category !== 'npc' && category !== 'object' && category !== 'recent';
 	const title = CATEGORIES.find(([c]) => c === category)![2];
@@ -206,7 +220,8 @@ export function Palette({ ctx }: { ctx: EditorContext }) {
 				))}
 			</div>
 			<div class="ed-category-title wow-label">{title}</div>
-			{category !== 'recent' && inCategory.groups.length > 1 && (
+			{category === 'terrain' && <TerrainPanel ctx={ctx} />}
+			{category !== 'recent' && category !== 'terrain' && inCategory.groups.length > 1 && (
 				<div class="ed-groups">
 					<button class={`ed-chip ${group === null ? 'on' : ''}`} onClick={() => setGroup(null)}>All <span>{inCategory.list.length}</span></button>
 					{inCategory.groups.map(([g, n]) => (
@@ -214,7 +229,7 @@ export function Palette({ ctx }: { ctx: EditorContext }) {
 					))}
 				</div>
 			)}
-			<input
+			{category !== 'terrain' && <input
 				class="wow-input ed-search"
 				type="search"
 				placeholder={models ? 'Find by name or folder…' : 'Find by name or ID…'}
@@ -225,15 +240,15 @@ export function Palette({ ctx }: { ctx: EditorContext }) {
 					if (e.key === 'Enter' && found.shown[0]) void choose(found.shown[0]);
 					if (e.key === 'Escape') (e.target as HTMLInputElement).blur();
 				}}
-			/>
-			{models && (
+			/>}
+			{models && category !== 'terrain' && (
 				<Check checked={classicOnly} onChange={(on) => {
 					setClassicOnly(on);
 					store(CLASSIC_KEY, on);
 					setGroup(null);
 				}} title="Hide the models of later expansions (The Burning Crusade onwards)">Classic only</Check>
 			)}
-			<ul class="ed-list">
+			{category !== 'terrain' && <ul class="ed-list">
 				{!rows && category !== 'recent' && <li class="ed-empty wow-muted">Reading the list…</li>}
 				{rows && !found.shown.length && (
 					<li class="ed-empty wow-muted">{category === 'recent' ? 'What you place shows up here.' : 'Nothing by that name.'}</li>
@@ -253,7 +268,55 @@ export function Palette({ ctx }: { ctx: EditorContext }) {
 					</li>
 				))}
 				{found.total > found.shown.length && <li class="ed-empty wow-muted">{found.total - found.shown.length} more: narrow it down</li>}
-			</ul>
+			</ul>}
 		</Panel>
+	);
+}
+
+const BRUSHES: [BrushKind, 'raise' | 'lower' | 'flatten' | 'smooth', string, string][] = [
+	['raise', 'raise', 'Raise', '1'],
+	['lower', 'lower', 'Lower', '2'],
+	['flatten', 'flatten', 'Flatten', '3'],
+	['smooth', 'smooth', 'Smooth', '4'],
+];
+
+/** A brush setting as a slider, with its value. */
+function BrushSlider({ label, value, min, max, step, show, onInput, title }: {
+	label: string; value: number; min: number; max: number; step: number; show: (v: number) => string; onInput: (v: number) => void; title: string;
+}) {
+	return (
+		<label class="ed-slider" title={title}>
+			<span class="wow-label">{label}</span>
+			<input type="range" min={min} max={max} step={step} value={value} onInput={(e) => onInput(Number((e.target as HTMLInputElement).value))} />
+			<output>{show(value)}</output>
+		</label>
+	);
+}
+
+/** The terrain brushes: which one, how big, how strong and how soft its edge. */
+function TerrainPanel({ ctx }: { ctx: EditorContext }) {
+	const brush = ctx.viewport.brush;
+	const kind = brush.kind.value;
+	return (
+		<div class="ed-terrain">
+			<div class="ed-brushes">
+				{BRUSHES.map(([k, icon, label, key]) => (
+					<div class="ed-brush">
+						<Slot icon={icon} title={label} keyLabel={key} pressed={kind === k} onClick={() => {
+							brush.kind.value = k;
+							ctx.viewport.tool.value = 'sculpt';
+						}} />
+						<span class={kind === k ? 'wow-label' : 'wow-muted'}>{label}</span>
+					</div>
+				))}
+			</div>
+			<BrushSlider label="Size" value={brush.size.value} min={2} max={80} step={1} show={(v) => `${v} yd`} onInput={(v) => (brush.size.value = v)} title="Brush radius (Alt+wheel)" />
+			<BrushSlider label="Strength" value={brush.strength.value} min={0.05} max={1} step={0.05} show={(v) => `${Math.round(v * 100)}%`} onInput={(v) => (brush.strength.value = v)} title="How fast it works (Ctrl+wheel)" />
+			<BrushSlider label="Softness" value={brush.softness.value} min={0} max={1} step={0.05} show={(v) => `${Math.round(v * 100)}%`} onInput={(v) => (brush.softness.value = v)} title="How much of the brush fades out towards its edge" />
+			<p class="wow-muted ed-hint">
+				Hold the left mouse button on the ground. Shift swaps raise and lower; flatten levels to the height where you
+				started. Each stroke is one step to undo. Only ground near the camera (in full detail) can be shaped.
+			</p>
+		</div>
 	);
 }

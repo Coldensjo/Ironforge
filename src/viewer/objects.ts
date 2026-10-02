@@ -57,6 +57,8 @@ class ModelEntry {
 	materials: THREE.Material[] = [];
 	/** For GPU-skinned models: the shadow pass's material, skinned the same way. */
 	depthMaterial: THREE.Material | null = null;
+	/** For GPU-skinned models: the bone texture and loops their materials share. */
+	skin: SkinUniforms | null = null;
 	textures: number[] = [];
 	/** WMO liquid surfaces, instanced with the same matrices as the model. */
 	liquids: { geometry: THREE.BufferGeometry; material: THREE.Material; type: number; mesh: THREE.InstancedMesh | null }[] = [];
@@ -95,6 +97,32 @@ interface PlacedObject {
 }
 
 export type ObjectLevel = 'none' | 'wmo' | 'all';
+
+/** One model of a placed thing as it's drawn now (see shapeOf). */
+export interface ModelShape {
+	/** The instance's key, the same while it stays this model. */
+	key: string;
+	geometry: THREE.BufferGeometry;
+	/** One per geometry group. */
+	materials: THREE.Material[];
+	skin: SkinUniforms | null;
+	matrix: THREE.Matrix4;
+	/** The model's bounding radius, before the placement's scale. */
+	radius: number;
+	/** Seconds into its loop it's offset by. */
+	phase: number;
+	walking: boolean;
+}
+
+/**
+ * A copy's point in its animation loop, stable per placement (hashed from its key), so a crowd
+ * of the same NPC doesn't move in lockstep.
+ */
+function loopPhase(key: string, duration: number): number {
+	let h = 2166136261;
+	for (let c = 0; c < key.length; c++) h = Math.imul(h ^ key.charCodeAt(c), 16777619);
+	return ((h >>> 0) / 4294967296) * duration;
+}
 
 interface TileRecord {
 	wdt: number;
@@ -238,6 +266,30 @@ export class ObjectManager {
 	}
 
 	/** Where an NPC, object or model is drawn (edited or not) and its model's radius and height, if it's placed. */
+	/**
+	 * What a placed thing is drawn with, model by model, for drawing its shape again (the
+	 * editor's selection outline). Empty while it's out of view or still loading.
+	 */
+	shapeOf(wdt: number, kind: Kind, uid: number): ModelShape[] {
+		const key = `${wdt}:${kind}:${uid}`;
+		const object = this.objects.get(`edit:${key}`) ?? this.objects.get(key);
+		if (!object) return [];
+		return object.parts.flatMap(({ entry, key }) => {
+			const matrix = entry.instances.get(key);
+			if (entry.state !== 'ready' || !entry.geometry || !matrix || !entry.visible.has(key)) return [];
+			return [{
+				key,
+				geometry: entry.geometry,
+				materials: entry.materials,
+				skin: entry.skin,
+				matrix,
+				radius: entry.radius,
+				phase: entry.animation ? loopPhase(key, entry.animation.duration) : 0,
+				walking: !!object.mover?.walking,
+			}];
+		});
+	}
+
 	spawnAt(wdt: number, kind: Kind, uid: number): { matrix: THREE.Matrix4; radius: number; height: number; animations?: number[] } | null {
 		const key = `${wdt}:${kind}:${uid}`;
 		const object = this.objects.get(`edit:${key}`) ?? this.objects.get(key);
@@ -479,6 +531,7 @@ export class ObjectManager {
 				uClips: { value: a.clips.map((c) => new THREE.Vector3(c.row, c.frames, c.duration)) },
 			};
 			entry.animation = { key: a.key, duration: a.clips[0].duration };
+			entry.skin = skin;
 			entry.depthMaterial = createSkinnedDepthMaterial(skin);
 		}
 		geometry.setIndex(new THREE.BufferAttribute(data.indices, 1));
@@ -642,9 +695,7 @@ export class ObjectManager {
 			geometry.setAttribute('instanceAnim', anim);
 		}
 		keys.forEach((key, i) => {
-			let h = 2166136261;
-			for (let c = 0; c < key.length; c++) h = Math.imul(h ^ key.charCodeAt(c), 16777619);
-			attribute!.setX(i, ((h >>> 0) / 4294967296) * duration);
+			attribute!.setX(i, loopPhase(key, duration));
 			// Standing or walking (see moveCreatures).
 			anim!.setX(i, this.objects.get(key)?.mover?.walking ? 1 : 0);
 		});
@@ -906,9 +957,9 @@ export class ObjectManager {
 	/**
 	 * The placed thing nearest along a ray: NPCs and game objects, and with props the map's own
 	 * models (closer than propRange), with buildings its buildings too. A building's furniture
-	 * isn't placed on its own, so it can't be picked.
+	 * isn't placed on its own, so it can't be picked. skip: keys (wdt:kind:uid) to see through.
 	 */
-	pickPlaced(raycaster: THREE.Raycaster, props = false, buildings = false, propRange = Infinity): { placement: Placement; wdt: number; distance: number } | null {
+	pickPlaced(raycaster: THREE.Raycaster, props = false, buildings = false, propRange = Infinity, skip?: Set<string>): { placement: Placement; wdt: number; distance: number } | null {
 		let best: { placement: Placement; wdt: number; distance: number } | null = null;
 		const far = raycaster.far;
 		for (const entry of this.models.values()) {
@@ -922,6 +973,7 @@ export class ObjectManager {
 				const object = this.objects.get(key);
 				if (!object || (spawn && !object.placement.spawn)) continue;
 				// Keys are wdt:kind:uid, or edit:wdt:kind:uid.
+				if (skip?.has(key.replace(/^edit:/, ''))) continue;
 				best = { placement: object.placement, wdt: Number(key.replace(/^edit:/, '').split(':')[0]), distance: hit.distance };
 				break; // hits are sorted; the first placed one is this model's nearest
 			}

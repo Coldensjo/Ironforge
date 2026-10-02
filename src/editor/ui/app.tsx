@@ -123,6 +123,9 @@ function MenuBar({ ctx }: { ctx: EditorContext }) {
 				<Item label="Undo" keys="Ctrl+Z" disabled={!doc.canUndo.value} onClick={() => doc.undo()} />
 				<Item label="Redo" keys="Ctrl+Y" disabled={!doc.canRedo.value} onClick={() => doc.redo()} />
 				<hr />
+				<Item label="Cut" keys="Ctrl+X" disabled={!selected} onClick={() => viewport.cut()} />
+				<Item label="Copy" keys="Ctrl+C" disabled={!selected} onClick={() => viewport.copy()} />
+				<Item label="Paste" keys="Ctrl+V" disabled={!viewport.clipboard.value.length} onClick={() => viewport.paste()} />
 				<Item label="Duplicate" keys="Ctrl+D" disabled={!selected} onClick={() => viewport.duplicate()} />
 				<Item label="Delete" keys="Del" disabled={!selected} onClick={() => viewport.remove()} />
 				<Item label="Back to the original" disabled={!selected} onClick={() => doc.revert(doc.selection.value)} />
@@ -181,11 +184,12 @@ function ViewMenu({ ctx }: { ctx: EditorContext }) {
 
 // --- Tools ---
 
-const TOOLS: [Tool, 'select' | 'move' | 'rotate' | 'scale', string, string][] = [
+const TOOLS: [Tool, 'select' | 'move' | 'rotate' | 'scale' | 'terrain', string, string][] = [
 	['select', 'select', 'Select', 'Q'],
 	['move', 'move', 'Move', 'W'],
 	['rotate', 'rotate', 'Turn', 'E'],
 	['scale', 'scale', 'Resize', 'R'],
+	['sculpt', 'terrain', 'Shape the ground', 'T'],
 ];
 
 function Toolbar({ ctx }: { ctx: EditorContext }) {
@@ -261,10 +265,13 @@ function Help() {
 		['Q · W · E · R', 'Select · Move · Turn · Resize'],
 		['Click · Ctrl+click', 'Select · add or take away'],
 		['Drag on empty ground', 'Select everything in a box'],
-		['Shift + drag', 'Move up and down'],
-		['Wheel while moving, Alt+wheel', 'Turn (Ctrl: finer)'],
+		['Drag the circle\'s orange part', 'Resize: out bigger, in smaller'],
+		['Shift while moving', 'Snap onto what\'s under the mouse: the ground, or on top of a prop'],
+		['Wheel while moving, Alt+wheel', 'Turn (Shift: finer)'],
+		['Ctrl+wheel', 'Raise / lower (Shift: by a yard)'],
 		['PgUp / PgDn', 'Raise / lower (Shift: by a yard)'],
 		['F', 'Fly to the selection'],
+		['Ctrl+C · Ctrl+X · Ctrl+V', 'Copy · cut · paste (follows the mouse until you click)'],
 		['Ctrl+D · Del', 'Duplicate · delete'],
 		['Ctrl+Z · Ctrl+Y', 'Undo · redo'],
 		['Esc', 'Stop placing, then select nothing'],

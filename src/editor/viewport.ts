@@ -5,8 +5,10 @@ import type { Placement } from '../explorer/objects';
 import { spawnKind, type SpawnInfo } from '../explorer/spawns';
 import { bindKeys, workspace } from '../app/input';
 import type { ObjectManager } from '../viewer/objects';
+import { RING_HANDLE_ARC, type SelectionOutline } from '../viewer/outline';
 import type { ContinentPlacement } from '../viewer/terrain';
 import { spawnId, type EditDocument, type SpawnEdit } from './document';
+import { TerrainBrush, type BrushKind, type SculptHost } from './sculpt';
 
 const MAP_ORIGIN = 32 * TILE_SIZE;
 /** Pixels the mouse moves with a button down before a click becomes a drag. */
@@ -15,7 +17,7 @@ const DRAG_THRESHOLD = 4;
 const PICK_DISTANCE = 1200;
 /** Yards; the map's own props further than this can't be picked (there are a great many). */
 const PROP_RANGE = 250;
-/** Degrees a wheel step turns what's held; with Ctrl, a fine step. */
+/** Degrees a wheel step turns what's held; with Shift, a fine step. */
 const TURN_STEP = 15;
 const FINE_TURN_STEP = 1;
 /** Yards Page Up / Page Down move the selection; with Shift, a bigger step. */
@@ -41,7 +43,7 @@ const WORLD_TO_CONTINENT = new THREE.Quaternion().setFromRotationMatrix(new THRE
 ));
 const CONTINENT_TO_WORLD = WORLD_TO_CONTINENT.clone().invert();
 
-export type Tool = 'select' | 'move' | 'rotate' | 'scale' | 'place';
+export type Tool = 'select' | 'move' | 'rotate' | 'scale' | 'place' | 'sculpt';
 
 /**
  * Something chosen in the palette, to put down where clicked: an NPC or game object template
@@ -54,11 +56,15 @@ export interface Stamp {
 }
 
 /** What the viewport needs from the viewer. */
-export interface EditorHost {
+export interface EditorHost extends SculptHost {
+	/** Shows a tile's ground height changes again (if the tile is loaded in detail). */
+	refreshTerrain(tile: string): void;
 	canvas: HTMLCanvasElement;
 	camera: THREE.PerspectiveCamera;
 	scene: THREE.Scene;
 	objects: ObjectManager;
+	/** The stroke around the selection, and the overlay the selection circles are drawn in. */
+	outline: SelectionOutline;
 	mapPlacement(mapId: number): ContinentPlacement | null;
 	/** The map at a point of the world (x, z), or with a WDT file ID; null over the open sea. */
 	mapAt(x: number, z: number): ContinentPlacement | null;
@@ -76,7 +82,8 @@ export interface EditorHost {
 
 /** Spawns being moved: as each was when the move started, and the edit each had. */
 interface Held {
-	items: { id: string; start: SpawnInfo; before: SpawnEdit | undefined }[];
+	/** now: where it's shown at the moment, for carrying on from there when snapping starts or stops. */
+	items: { id: string; start: SpawnInfo; before: SpawnEdit | undefined; now?: SpawnInfo }[];
 	/** The one under the mouse, which the others keep their places around. */
 	anchor: SpawnInfo;
 	/** 'drag' while the button is held; 'carry' follows the mouse until a click (copies, stamps). */
@@ -85,13 +92,34 @@ interface Held {
 	lift: number;
 	/** Turned by the wheel, radians. */
 	turn: number;
+	/**
+	 * For a drag: the ground under the mouse when it was grabbed (world space). What's held moves
+	 * as far as the mouse does from there, rather than jumping to put its feet under the mouse.
+	 */
+	grab?: THREE.Vector3;
+	/** Shift held: its feet go onto whatever is under the mouse, the ground or the top of another thing. */
+	snap?: boolean;
 }
 
 /** A rotate or scale drag: how far the mouse has gone since the button went down. */
 interface Adjust {
-	kind: 'rotate' | 'scale';
+	/** handle: the selection circle's orange handle, dragged out from its centre or in towards it. */
+	kind: 'rotate' | 'scale' | 'handle';
 	items: { id: string; start: SpawnInfo; before: SpawnEdit | undefined }[];
+	/** Pixels for rotate and scale; for the handle, yards from the circle's centre. */
 	from: number;
+	/** The handle's circle's centre, world space. */
+	center?: THREE.Vector3;
+}
+
+/** A selection circle under the mouse. */
+interface RingHit {
+	spawn: SpawnInfo;
+	/** On its resize handle. */
+	handle: boolean;
+	center: THREE.Vector3;
+	/** Yards from the centre, at the circle's level. */
+	distance: number;
 }
 
 /** Where the mouse went down, until it moves far enough to be a drag. */
@@ -100,6 +128,8 @@ interface Press {
 	y: number;
 	hit: SpawnInfo | null;
 	ctrl: boolean;
+	/** Pressed on a selection circle's resize handle. */
+	handle?: RingHit;
 }
 
 /**
@@ -116,8 +146,12 @@ export class EditorViewport {
 	readonly buildings = signal(false);
 	/** New stamps face a random way. */
 	readonly randomTurn = signal(false);
+	/** What Ctrl+C last copied, for Ctrl+V. */
+	readonly clipboard = signal<SpawnInfo[]>([]);
 	/** A line for the status bar about what the mouse would do. */
 	readonly hint = signal('');
+	/** The terrain brushes (the sculpt tool). */
+	readonly brush: TerrainBrush;
 
 	private readonly raycaster = new THREE.Raycaster();
 	private readonly mouse = new THREE.Vector2();
@@ -125,9 +159,13 @@ export class EditorViewport {
 	private held: Held | null = null;
 	private adjust: Adjust | null = null;
 	private lastHover = 0;
+	/** Whether the mouse is over the 3D view, and Shift is held (the sculpt tool reads both each frame). */
+	private overView = false;
+	private shift = false;
 	private readonly rings: THREE.Mesh[] = [];
+	/** The spawn each shown ring is under, by ring. */
+	private readonly ringSpawns: SpawnInfo[] = [];
 	private readonly ringGeometry = new THREE.RingGeometry(0.86, 1, 48).rotateX(-Math.PI / 2);
-	private readonly ringMaterial = new THREE.MeshBasicMaterial({ color: 0xffd100, transparent: true, opacity: 0.85, depthTest: false, depthWrite: false, fog: false, side: THREE.DoubleSide });
 	private readonly marquee: HTMLDivElement;
 
 	constructor(private readonly host: EditorHost, private readonly doc: EditDocument) {
@@ -135,33 +173,55 @@ export class EditorViewport {
 		this.marquee.className = 'ed-marquee';
 		this.marquee.hidden = true;
 		document.body.append(this.marquee);
+		this.brush = new TerrainBrush(host, doc);
+		host.canvas.addEventListener('pointerleave', () => (this.overView = false));
 
 		const canvas = host.canvas;
 		canvas.addEventListener('pointerdown', (e) => this.active && this.onPointerDown(e));
 		window.addEventListener('pointermove', (e) => this.active && this.onPointerMove(e));
 		window.addEventListener('pointerup', (e) => this.active && this.onPointerUp(e));
 		canvas.addEventListener('contextmenu', (e) => this.active && e.preventDefault());
-		// Captured ahead of the camera's zoom: the wheel turns what's held, or with Alt the selection.
+		// Captured ahead of the camera's zoom (and with Ctrl, the browser's): the wheel turns what's
+		// held, or with Alt the selection; with Ctrl it raises or lowers them.
 		window.addEventListener('wheel', (e) => this.active && this.onWheel(e), { capture: true, passive: false });
 		bindKeys('edit', (e) => this.onKey(e));
 		// Alt is held for turning; let go, it would otherwise move focus to the browser's menu.
 		window.addEventListener('keyup', (e) => {
 			if (this.active && e.key === 'Alt') e.preventDefault();
+			if (this.active && e.key === 'Shift') this.setSnap(false);
+			if (e.key === 'Shift') this.shift = false;
 		});
 		workspace.subscribe((w) => {
 			if (w !== 'edit') this.cancel();
 			this.updateHint();
 		});
-		this.tool.subscribe(() => this.updateHint());
+		this.tool.subscribe(() => {
+			if (this.tool.value !== 'sculpt') this.brush.end();
+			this.updateHint();
+		});
+		this.brush.kind.subscribe(() => this.updateHint());
 	}
 
 	private get active(): boolean {
 		return workspace.value === 'edit';
 	}
 
-	/** Moves the selection circles to the selected spawns; call every frame. */
+	/** Moves the selection circles to the selected spawns, and works the terrain brush; call every frame. */
 	update(): void {
+		const sculpting = this.active && this.tool.value === 'sculpt' && (this.overView || this.brush.active) && !this.host.looking;
+		let center: THREE.Vector3 | null = null;
+		if (sculpting) {
+			this.raycaster.setFromCamera(this.ndc(this.mouse.x, this.mouse.y), this.host.camera);
+			center = this.groundHit(this.raycaster.ray, false);
+		}
+		this.brush.update(center, (x, z) => this.host.heightAt(x, z), this.shift);
 		const shown = this.active && !document.body.classList.contains('ui-hidden') ? this.doc.selection.value.slice(0, MAX_RINGS) : [];
+		this.host.outline.targets = shown.flatMap((s) => {
+			const placement = this.host.mapPlacement(s.place.map);
+			return placement ? [{ wdt: placement.wdt, kind: spawnKind(s.type), uid: s.guid }] : [];
+		});
+		const right = new THREE.Vector3().setFromMatrixColumn(this.host.camera.matrixWorld, 0);
+		const handleTurn = Math.atan2(-right.z, right.x);
 		let n = 0;
 		for (const s of shown) {
 			const placement = this.host.mapPlacement(s.place.map);
@@ -174,17 +234,20 @@ export class EditorViewport {
 			// The bounds reach well past the feet (arms, weapons, a tail); a person gets about a yard.
 			// Trees and buildings would get huge ones: a few yards at most.
 			ring.scale.setScalar(THREE.MathUtils.clamp(Math.min(at.radius, at.height) * scale * 0.5, 0.5, MAX_RING));
+			// The resize handle (local +x) faces the camera's right, where it can always be seen.
+			ring.rotation.y = handleTurn;
 			ring.visible = true;
+			this.ringSpawns[n] = s;
 			n++;
 		}
 		for (let i = n; i < this.rings.length; i++) this.rings[i].visible = false;
 	}
 
 	private addRing(): THREE.Mesh {
-		const ring = new THREE.Mesh(this.ringGeometry, this.ringMaterial);
-		ring.renderOrder = 10;
+		// Drawn over the finished frame, red where the ground or another model covers it.
+		const ring = new THREE.Mesh(this.ringGeometry, this.host.outline.ringMaterial);
 		ring.frustumCulled = false;
-		this.host.scene.add(ring);
+		this.host.outline.overlay.add(ring);
 		this.rings.push(ring);
 		return ring;
 	}
@@ -201,10 +264,31 @@ export class EditorViewport {
 
 	/** Copies the selection; the copies follow the mouse until a click puts them down. */
 	duplicate(): void {
+		this.pasteCopies(this.doc.selection.value);
+	}
+
+	/** Keeps the selection as it stands now, for pasting (as often as wanted) later. */
+	copy(): void {
 		const selected = this.doc.selection.value;
 		if (!selected.length) return;
+		this.clipboard.value = selected.map((s) => ({ ...s, place: { ...s.place } }));
+	}
+
+	cut(): void {
+		if (!this.doc.selection.value.length) return;
+		this.copy();
+		this.remove();
+	}
+
+	/** New copies of what was copied, following the mouse until a click puts them down. */
+	paste(): void {
+		this.pasteCopies(this.clipboard.value);
+	}
+
+	private pasteCopies(from: SpawnInfo[]): void {
+		if (!from.length) return;
 		this.cancel();
-		const copies = selected.map((s) => {
+		const copies = from.map((s) => {
 			const copy: SpawnInfo = { ...s, guid: this.doc.nextGuid(s.type, s.place.map), created: true, place: { ...s.place } };
 			this.doc.preview(copy);
 			return copy;
@@ -271,6 +355,33 @@ export class EditorViewport {
 		return hit.placement.spawn ?? this.modelInfo(hit.placement, hit.wdt);
 	}
 
+	/** The selected spawn whose circle is under the mouse (the nearest, where they overlap), or null. */
+	private ringAt(x: number, y: number): RingHit | null {
+		this.raycaster.setFromCamera(this.ndc(x, y), this.host.camera);
+		const ray = this.raycaster.ray;
+		const point = new THREE.Vector3();
+		let best: RingHit | null = null;
+		let bestDistance = Infinity;
+		this.rings.forEach((ring, i) => {
+			if (!ring.visible) return;
+			// Where the ray crosses the ring's level: inside its radius, or on its handle, which
+			// is thin, so it's given some room either side of the line.
+			const t = (ring.position.y - ray.origin.y) / ray.direction.y;
+			if (!(t > 0) || t > PICK_DISTANCE || t >= bestDistance) return;
+			ray.at(t, point);
+			const dx = point.x - ring.position.x, dz = point.z - ring.position.z;
+			const distance = Math.hypot(dx, dz);
+			const r = ring.scale.x;
+			// Angle from the handle's middle, the circle's local +x: (cos, 0, -sin) of its turn.
+			const along = (dx * Math.cos(ring.rotation.y) - dz * Math.sin(ring.rotation.y)) / (distance || 1);
+			const handle = distance > r * 0.6 && distance < r * 1.4 && Math.acos(THREE.MathUtils.clamp(along, -1, 1)) < RING_HANDLE_ARC + 0.1;
+			if (distance > r && !handle) return;
+			best = { spawn: this.ringSpawns[i], handle, center: ring.position.clone(), distance };
+			bestDistance = t;
+		});
+		return best;
+	}
+
 	private onPointerDown(e: PointerEvent): void {
 		if (e.button === 2) {
 			// Right button held: look around and fly, as in the game.
@@ -279,27 +390,42 @@ export class EditorViewport {
 		}
 		if (e.button !== 0 || this.host.looking) return;
 		this.mouse.set(e.clientX, e.clientY);
+		if (this.tool.value === 'sculpt') {
+			this.raycaster.setFromCamera(this.ndc(e.clientX, e.clientY), this.host.camera);
+			const center = this.groundHit(this.raycaster.ray, false);
+			if (center) this.brush.start(center);
+			return;
+		}
 		if (this.held?.mode === 'carry') {
 			this.putDown();
 			return;
 		}
-		const hit = this.pickAt(e.clientX, e.clientY);
-		this.press = { x: e.clientX, y: e.clientY, hit, ctrl: e.ctrlKey || e.metaKey };
+		// The resize handle is drawn over everything, so it comes first.
+		const ring = this.ringAt(e.clientX, e.clientY);
+		const handle = ring?.handle ? ring : undefined;
+		const hit = handle?.spawn ?? this.pickAt(e.clientX, e.clientY) ?? ring?.spawn ?? null;
+		this.press = { x: e.clientX, y: e.clientY, hit, ctrl: e.ctrlKey || e.metaKey, handle };
 	}
 
 	private onPointerMove(e: PointerEvent): void {
+		this.shift = e.shiftKey;
 		if (this.host.looking) return;
-		const dy = e.clientY - this.mouse.y;
 		this.mouse.set(e.clientX, e.clientY);
+		this.overView = e.target === this.host.canvas;
+		if (this.tool.value === 'sculpt') {
+			this.host.canvas.style.cursor = this.overView ? 'crosshair' : '';
+			return;
+		}
 		const press = this.press;
 		if (press && !this.held && !this.adjust && this.marquee.hidden && Math.hypot(e.clientX - press.x, e.clientY - press.y) > DRAG_THRESHOLD) this.startDrag(press);
 		if (this.held) {
-			if (e.shiftKey) this.held.lift -= dy * this.yardsPerPixel(this.held.anchor);
+			this.setSnap(e.shiftKey);
 			this.moveHeld();
 			return;
 		}
 		if (this.adjust) {
-			this.adjustBy(this.adjust.kind === 'rotate' ? e.clientX - this.adjust.from : this.adjust.from - e.clientY);
+			if (this.adjust.kind === 'handle') this.resizeByHandle(e.clientX, e.clientY);
+			else this.adjustBy(this.adjust.kind === 'rotate' ? e.clientX - this.adjust.from : this.adjust.from - e.clientY);
 			return;
 		}
 		if (press && !this.marquee.hidden) {
@@ -308,12 +434,17 @@ export class EditorViewport {
 		}
 		if (e.target !== this.host.canvas || performance.now() - this.lastHover < 80) return;
 		this.lastHover = performance.now();
-		this.host.canvas.style.cursor = this.pickAt(e.clientX, e.clientY) ? 'var(--wow-cursor-grab, grab)' : '';
+		const ring = this.ringAt(e.clientX, e.clientY);
+		this.host.canvas.style.cursor = ring?.handle ? 'nwse-resize' : this.pickAt(e.clientX, e.clientY) ?? ring ? 'var(--wow-cursor-grab, grab)' : '';
 	}
 
 	private onPointerUp(e: PointerEvent): void {
 		if (e.button === 2 && this.host.looking) document.exitPointerLock();
 		if (e.button !== 0) return;
+		if (this.brush.active) {
+			this.brush.end();
+			return;
+		}
 		const press = this.press;
 		this.press = null;
 		if (this.held?.mode === 'drag') {
@@ -340,7 +471,9 @@ export class EditorViewport {
 	/** The mouse moved far enough with the button down: move, turn, scale, or draw a box. */
 	private startDrag(press: Press): void {
 		const tool = this.tool.value;
-		if (!press.hit || tool === 'select' || tool === 'place') {
+		// Ctrl only ever adds to the selection: a Ctrl+click that slips draws a box, never moves.
+		// The resize handle resizes whatever the tool.
+		if (!press.hit || press.ctrl || (!press.handle && (tool === 'select' || tool === 'place'))) {
 			this.marquee.hidden = false;
 			this.drawMarquee(press.x, press.y, press.x, press.y);
 			return;
@@ -350,10 +483,15 @@ export class EditorViewport {
 		if (!this.doc.selection.value.some((s) => spawnId(s) === id)) this.doc.select([press.hit]);
 		const selected = this.doc.selection.value;
 		const items = selected.map((s) => ({ id: spawnId(s), start: s, before: this.doc.editOf(spawnId(s)) }));
-		if (tool === 'move') {
-			this.held = { items, anchor: selected.find((s) => spawnId(s) === id) ?? selected[0], mode: 'drag', lift: 0, turn: 0 };
+		if (press.handle) {
+			this.adjust = { kind: 'handle', items, from: Math.max(press.handle.distance, 0.05), center: press.handle.center };
+		} else if (tool === 'move') {
+			const anchor = selected.find((s) => spawnId(s) === id) ?? selected[0];
+			this.raycaster.setFromCamera(this.ndc(press.x, press.y), this.host.camera);
+			const grab = this.groundHit(this.raycaster.ray, anchor.type !== 'wmo') ?? undefined;
+			this.held = { items, anchor, mode: 'drag', lift: 0, turn: 0, grab };
 			this.host.canvas.style.cursor = 'var(--wow-cursor-grab, grabbing)';
-		} else {
+		} else if (tool === 'rotate' || tool === 'scale') {
 			this.adjust = { kind: tool, items, from: tool === 'rotate' ? press.x : press.y };
 		}
 	}
@@ -369,17 +507,61 @@ export class EditorViewport {
 		const placement = this.host.mapPlacement(held.anchor.place.map);
 		if (!placement) return;
 		this.raycaster.setFromCamera(this.ndc(this.mouse.x, this.mouse.y), this.host.camera);
-		const hit = this.groundHit(this.raycaster.ray, held.anchor.type !== 'wmo');
+		const ray = this.raycaster.ray;
+		let hit = this.groundHit(ray, held.anchor.type !== 'wmo');
+		if (held.snap) {
+			// Onto the top of another prop or object, if that's nearer than the ground; never onto what's held.
+			const top = this.host.objects.pickPlaced(this.raycaster, true, false, PROP_RANGE, this.heldKeys(held));
+			if (top && (!hit || top.distance < hit.distanceTo(ray.origin))) hit = ray.at(top.distance, new THREE.Vector3());
+		}
 		if (!hit) return;
 		// World -> WoW coordinates for this map (the inverse of placing a spawn).
-		const x = MAP_ORIGIN + placement.offsetY * TILE_SIZE - hit.z;
-		const y = MAP_ORIGIN + placement.offsetX * TILE_SIZE - hit.x;
-		const a = held.anchor.place;
-		const dx = x - a.x, dy = y - a.y, dz = hit.y + held.lift - a.z;
+		let dx: number, dy: number, dz: number;
+		if (held.grab && !held.snap) {
+			// Moved by as much as the ground under the mouse has.
+			dx = held.grab.z - hit.z;
+			dy = held.grab.x - hit.x;
+			dz = hit.y - held.grab.y + held.lift;
+		} else {
+			// Carried or snapping: its feet go where the mouse points.
+			const a = held.anchor.place;
+			dx = MAP_ORIGIN + placement.offsetY * TILE_SIZE - hit.z - a.x;
+			dy = MAP_ORIGIN + placement.offsetX * TILE_SIZE - hit.x - a.y;
+			dz = hit.y + held.lift - a.z;
+		}
 		for (const item of held.items) {
 			const p = item.start.place;
-			this.doc.preview(turned({ ...item.start, place: { ...p, x: p.x + dx, y: p.y + dy, z: p.z + dz } }, held.turn));
+			item.now = turned({ ...item.start, place: { ...p, x: p.x + dx, y: p.y + dy, z: p.z + dz } }, held.turn);
+			this.doc.preview(item.now);
 		}
+	}
+
+	/** Object keys (wdt:kind:uid) of what's held, for seeing through it. */
+	private heldKeys(held: Held): Set<string> {
+		const keys = new Set<string>();
+		for (const { start: s } of held.items) {
+			const placement = this.host.mapPlacement(s.place.map);
+			if (placement) keys.add(`${placement.wdt}:${spawnKind(s.type)}:${s.guid}`);
+		}
+		return keys;
+	}
+
+	/** Starts or stops snapping; what's held carries on from where it is, rather than jumping back. */
+	private setSnap(on: boolean): void {
+		const held = this.held;
+		if (!held || !!held.snap === on) return;
+		const anchorId = spawnId(held.anchor);
+		for (const item of held.items) item.start = item.now ?? item.start;
+		held.anchor = held.items.find((i) => i.id === anchorId)?.start ?? held.anchor;
+		held.lift = 0;
+		held.turn = 0;
+		held.snap = on;
+		// A drag goes on moving as far as the mouse does, from the ground under it now.
+		if (held.mode === 'drag' && !on) {
+			this.raycaster.setFromCamera(this.ndc(this.mouse.x, this.mouse.y), this.host.camera);
+			held.grab = this.groundHit(this.raycaster.ray, held.anchor.type !== 'wmo') ?? undefined;
+		}
+		this.moveHeld();
 	}
 
 	private commitHeld(): void {
@@ -427,10 +609,46 @@ export class EditorViewport {
 		}
 	}
 
+	/** Handle drag: the selection resized by how much further from the circle's centre the mouse is than it was. */
+	private resizeByHandle(x: number, y: number): void {
+		const adjust = this.adjust!;
+		const center = adjust.center!;
+		this.raycaster.setFromCamera(this.ndc(x, y), this.host.camera);
+		const ray = this.raycaster.ray;
+		const t = (center.y - ray.origin.y) / ray.direction.y;
+		// Looking level with the circle, or above it from below, the mouse doesn't meet its level.
+		if (!(t > 0) || t > PICK_DISTANCE) return;
+		const point = ray.at(t, new THREE.Vector3());
+		const factor = Math.hypot(point.x - center.x, point.z - center.z) / adjust.from;
+		for (const item of adjust.items) {
+			this.doc.preview({ ...item.start, place: { ...item.start.place, scale: Math.max(0.05, item.start.place.scale * factor) } });
+		}
+	}
+
 	private onWheel(e: WheelEvent): void {
 		if (e.target !== this.host.canvas || this.host.looking) return;
-		const step = (e.ctrlKey ? FINE_TURN_STEP : TURN_STEP) * -Math.sign(e.deltaY || e.deltaX);
-		if (this.held) {
+		const direction = -Math.sign(e.deltaY || e.deltaX);
+		const step = (e.shiftKey ? FINE_TURN_STEP : TURN_STEP) * direction;
+		if (this.tool.value === 'sculpt' && (e.altKey || e.ctrlKey || e.metaKey)) {
+			// The brush: Alt+wheel its size, Ctrl+wheel its strength.
+			if (e.altKey) this.brush.size.value = THREE.MathUtils.clamp(Math.round(this.brush.size.value * (direction > 0 ? 1.15 : 1 / 1.15)), 2, 80);
+			else this.brush.strength.value = THREE.MathUtils.clamp(Math.round((this.brush.strength.value + direction * 0.05) * 100) / 100, 0.05, 1);
+			e.preventDefault();
+			e.stopPropagation();
+			return;
+		}
+		if (e.ctrlKey || e.metaKey) {
+			// Up and down; with Shift, by a yard. Even with nothing to move, not the browser's zoom.
+			const yards = (e.shiftKey ? BIG_RAISE_STEP : RAISE_STEP) * direction;
+			if (this.held) {
+				this.held.lift += yards;
+				this.moveHeld();
+			} else if (this.adjust) {
+				return;
+			} else if (this.doc.selection.value.length) {
+				this.raise(yards);
+			}
+		} else if (this.held) {
 			this.held.turn += THREE.MathUtils.degToRad(step);
 			this.moveHeld();
 		} else if (e.altKey && this.doc.selection.value.length) {
@@ -465,7 +683,11 @@ export class EditorViewport {
 			return p.z < 1 && p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1;
 		}, this.props.value, this.buildings.value, PROP_RANGE, camera.position);
 		const infos = found.map((f) => f.placement.spawn ?? this.modelInfo(f.placement, f.wdt)).filter((i): i is SpawnInfo => !!i);
-		this.doc.select(press.ctrl ? [...this.doc.selection.value, ...infos] : infos);
+		// What the box was started on counts too, even when its feet aren't inside.
+		if (press.hit) infos.push(press.hit);
+		const all = press.ctrl ? [...this.doc.selection.value, ...infos] : infos;
+		const ids = new Set<string>();
+		this.doc.select(all.filter((s) => !ids.has(spawnId(s)) && !!ids.add(spawnId(s))));
 	}
 
 	// --- Keys ---
@@ -474,7 +696,17 @@ export class EditorViewport {
 		// While looking around, the letters fly the camera.
 		if (this.host.looking) return false;
 		const ctrl = e.ctrlKey || e.metaKey;
-		const tools: Record<string, Tool> = { KeyQ: 'select', KeyW: 'move', KeyE: 'rotate', KeyR: 'scale' };
+		if (e.key === 'Shift' && this.held) {
+			this.setSnap(true);
+			return true;
+		}
+		const tools: Record<string, Tool> = { KeyQ: 'select', KeyW: 'move', KeyE: 'rotate', KeyR: 'scale', KeyT: 'sculpt' };
+		const brushes: Record<string, BrushKind> = { Digit1: 'raise', Digit2: 'lower', Digit3: 'flatten', Digit4: 'smooth' };
+		if (e.key === 'Shift') this.shift = true;
+		if (this.tool.value === 'sculpt' && !ctrl && brushes[e.code]) {
+			this.brush.kind.value = brushes[e.code];
+			return true;
+		}
 		if (ctrl && e.code === 'KeyZ') {
 			this.cancel();
 			if (e.shiftKey) this.doc.redo();
@@ -483,6 +715,9 @@ export class EditorViewport {
 			this.cancel();
 			this.doc.redo();
 		} else if (ctrl && e.code === 'KeyD') this.duplicate();
+		else if (ctrl && e.code === 'KeyC' && this.doc.selection.value.length) this.copy();
+		else if (ctrl && e.code === 'KeyX' && this.doc.selection.value.length) this.cut();
+		else if (ctrl && e.code === 'KeyV' && this.clipboard.value.length) this.paste();
 		else if (!ctrl && tools[e.code]) {
 			this.cancel();
 			this.stamp.value = null;
@@ -492,6 +727,10 @@ export class EditorViewport {
 		else if ((e.code === 'PageUp' || e.code === 'PageDown') && this.doc.selection.value.length) {
 			this.raise((e.shiftKey ? BIG_RAISE_STEP : RAISE_STEP) * (e.code === 'PageUp' ? 1 : -1));
 		} else if (e.code === 'Escape') {
+			if (this.brush.active) {
+				this.brush.cancel();
+				return true;
+			}
 			if (this.held || this.adjust || this.press) this.cancel();
 			if (this.tool.value === 'place') {
 				this.stamp.value = null;
@@ -505,10 +744,16 @@ export class EditorViewport {
 	private updateHint(): void {
 		this.hint.value = {
 			select: 'Click to select · Ctrl+click adds · drag a box around things',
-			move: 'Drag to move along the ground · Shift+drag up and down · wheel while dragging turns',
+			move: 'Drag to move along the ground · Shift snaps onto what\'s under the mouse · Ctrl+wheel up and down · wheel turns',
 			rotate: 'Drag left and right to turn the selection',
 			scale: 'Drag up and down to resize the selection',
-			place: 'Click to put it down · wheel turns it · Esc stops placing',
+			place: 'Click to put it down · Shift snaps onto props · wheel turns it, Ctrl+wheel raises it · Esc stops placing',
+			sculpt: {
+				raise: 'Hold the mouse to raise the ground (Shift lowers) · Alt+wheel brush size · Ctrl+wheel strength · 1-4 brushes',
+				lower: 'Hold the mouse to lower the ground (Shift raises) · Alt+wheel brush size · Ctrl+wheel strength · 1-4 brushes',
+				flatten: 'Hold the mouse to level the ground to where you started · Alt+wheel brush size · Ctrl+wheel strength',
+				smooth: 'Hold the mouse to smooth bumps and edges · Alt+wheel brush size · Ctrl+wheel strength',
+			}[this.brush?.kind.value ?? 'raise'],
 		}[this.tool.value];
 	}
 
@@ -524,13 +769,6 @@ export class EditorViewport {
 		const placement = this.host.mapPlacement(s.place.map);
 		const at = placement && this.host.objects.spawnAt(placement.wdt, spawnKind(s.type), s.guid);
 		return at ? new THREE.Vector3().setFromMatrixPosition(at.matrix) : null;
-	}
-
-	/** Yards the mouse moves one pixel at a spawn's distance (for Shift+drag). */
-	private yardsPerPixel(s: SpawnInfo): number {
-		const at = this.worldPosition(s);
-		const distance = at ? at.distanceTo(this.host.camera.position) : 10;
-		return (2 * distance * Math.tan(THREE.MathUtils.degToRad(this.host.camera.fov / 2))) / this.host.canvas.clientHeight;
 	}
 
 	/** Where a ray first meets the ground (or, with buildings, a building), if within reach. */
