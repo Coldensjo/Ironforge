@@ -734,6 +734,7 @@ async function setUpWorkspaces(viewer: Viewer): Promise<void> {
 	const host = viewer.editorHost();
 	const doc = new EditDocument(host);
 	viewer.heightDeltas = (key) => doc.heightDelta(key);
+	viewer.surfaceEdits = (key) => doc.surfaceEdits(key);
 	const viewport = new EditorViewport(host, doc);
 	const projects = new Projects(viewer, doc);
 	viewer.onFrame.push(() => viewport.update());

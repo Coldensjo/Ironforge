@@ -230,5 +230,39 @@ function parseChunk(bytes: Uint8Array, view: DataView, start: number, h: number)
 		}
 		layers.alpha.push(alpha);
 	}
+	sequentialToWeights(layers.alpha);
 	return { chunk, layers, liquids: parseLiquids(view, start, h, chunk.indexY * 16 + chunk.indexX) };
+}
+
+/**
+ * 1.12 draws a chunk's layers one over the other, each by its alpha map; the renderer (and the
+ * editor's brushes) weigh them instead: layer i by its map, the base by what's left. The same
+ * look either way: in place, each upper layer's map becomes its share (its alpha times what the
+ * layers above leave showing).
+ */
+export function sequentialToWeights(maps: Uint8Array[]): void {
+	for (let t = 0; t < ALPHA_TEXELS; t++) {
+		let showing = 1;
+		for (let i = maps.length - 1; i >= 0; i--) {
+			const a = maps[i][t] / 255;
+			maps[i][t] = Math.round(a * showing * 255);
+			showing *= 1 - a;
+		}
+	}
+}
+
+/** The other way, for writing 1.12's files: shares back into alpha maps drawn one over the other. */
+export function weightsToSequential(maps: Uint8Array[]): Uint8Array[] {
+	const out = maps.map(() => new Uint8Array(ALPHA_TEXELS));
+	for (let t = 0; t < ALPHA_TEXELS; t++) {
+		// What the layers above leave of the texel, from the top down.
+		let above = 0;
+		for (let i = maps.length - 1; i >= 0; i--) {
+			const w = maps[i][t] / 255;
+			const left = 1 - above;
+			out[i][t] = left > 1e-3 ? Math.round(Math.min(1, w / left) * 255) : 0;
+			above += w;
+		}
+	}
+	return out;
 }

@@ -1,4 +1,4 @@
-import { EditStore, replaceWorkingCopy, type SpawnEdit } from '../editor/document';
+import { EditStore, replaceWorkingCopy, type PaintFile, type SpawnEdit, type WaterFile } from '../editor/document';
 import type { WorldKind } from '../viewer/viewer';
 
 export const PROJECT_FORMAT = 'ironforge-project';
@@ -16,6 +16,9 @@ export interface ProjectFile {
 	/** Spawn edits by spawn, and ground height changes by tile (base64 floats), as EditDocument exports them. */
 	edits: Record<string, SpawnEdit>;
 	terrain: Record<string, string>;
+	/** Painted chunks and edited water by tile (arrays in base64); older projects have none. */
+	paint?: PaintFile;
+	water?: WaterFile;
 	/** When it was saved (ISO). */
 	saved: string;
 }
@@ -80,7 +83,7 @@ export function takeNext(): 'continue' | 'launcher' | null {
 export function parseProject(text: string): ProjectFile {
 	const file = JSON.parse(text) as Partial<ProjectFile>;
 	if (file.format !== PROJECT_FORMAT || (file.world !== 'sandbox' && file.world !== 'azeroth')) throw new Error('Not an Ironforge project');
-	return { format: PROJECT_FORMAT, version: 1, name: file.name || 'Untitled', world: file.world, view: file.view, edits: file.edits ?? {}, terrain: file.terrain ?? {}, saved: file.saved ?? '' };
+	return { format: PROJECT_FORMAT, version: 1, name: file.name || 'Untitled', world: file.world, view: file.view, edits: file.edits ?? {}, terrain: file.terrain ?? {}, paint: file.paint ?? {}, water: file.water ?? {}, saved: file.saved ?? '' };
 }
 
 /**
@@ -88,7 +91,7 @@ export function parseProject(text: string): ProjectFile {
  * it. The page then loads its world (or reloads into it).
  */
 export async function useProject(file: ProjectFile, where: { path?: string; stored?: string }): Promise<void> {
-	await replaceWorkingCopy(file.edits, file.terrain);
+	await replaceWorkingCopy(file.edits, file.terrain, file.paint, file.water);
 	writeSession({ name: file.name, world: file.world, ...where, dirty: false });
 	if (file.view) history.replaceState(null, '', file.view);
 }

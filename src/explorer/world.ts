@@ -15,6 +15,8 @@ import { parseVanillaAdt, vanillaModelNames } from '../formats/vanilla';
 import { liquidKind } from '../formats/mh2o';
 import { VanillaStorage } from '../mpq/vanillaStorage';
 import { buildMapPatch, type MapPatch, type ModelEdit } from './mapExport';
+import { applySurfaceEdits, surfaceState, type SurfaceState, type TextureNames } from './surface';
+import type { SurfaceEdits, TilePaint, TileWater } from '../formats/surfaceEdits';
 import { globalWmoPlacement, globalWmoTiles, loadM2, loadWmo, parsePlacements, type ModelData, type ObjectKind, type Placement } from './objects';
 import { GroundEffects, type ClutterSource } from './groundEffects';
 import { PortalSource } from './portals';
@@ -107,6 +109,15 @@ export interface NearTile {
 	clutter: ClutterSource | null;
 	/** Which way the rivers flow (see WdtTile.flowMap), or null where the tile has none. */
 	flow: TextureData | null;
+	/** Each chunk's texture layers and water, as the editor's brushes start from them (null without layers). */
+	surface: SurfaceState | null;
+}
+
+/** A texture the editor's paint brush can use. */
+export interface TerrainTexture {
+	ref: string;
+	id: number;
+	name: string;
 }
 
 export interface LoadedTexture {
@@ -185,10 +196,10 @@ export class WorldLoader {
 	}
 
 	/** The editor's map changes as a patch archive for the original (1.12) client. */
-	async exportMapPatch(models: ModelEdit[], terrain: Record<string, Float32Array>): Promise<MapPatch> {
+	async exportMapPatch(models: ModelEdit[], terrain: Record<string, Float32Array>, paint?: Record<string, TilePaint>, water?: Record<string, TileWater>): Promise<MapPatch> {
 		const storage = this.storage;
 		if (!(storage instanceof VanillaStorage)) throw new Error('Map changes can only be made into files for the original (1.12) client');
-		return buildMapPatch(storage, this.maps, (id) => this.wdtOfMap(id), models, terrain);
+		return buildMapPatch(storage, this.maps, (id) => this.wdtOfMap(id), models, terrain, paint, water);
 	}
 
 	/** Every map the install has files for, by Map.db2 instance type. */
@@ -232,13 +243,39 @@ export class WorldLoader {
 		})));
 	}
 
-	async loadNearTile(wdtFdid: number, x: number, y: number, compressed: boolean): Promise<NearTile> {
-		if (isSandbox(wdtFdid)) return this.sandboxNearTile(x, y);
+	/** Texture files by reference for the editor: the original client's by path, the modern one's by file ID. */
+	private textureNames(): TextureNames {
+		const storage = this.storage;
+		if (storage instanceof VanillaStorage) return { ref: (id) => storage.pathOf(id) ?? `#${id}`, id: (ref) => (ref.startsWith('#') ? Number(ref.slice(1)) : storage.idOf(ref)) };
+		return { ref: (id) => `#${id}`, id: (ref) => Number(ref.replace(/^#/, '')) || 0 };
+	}
+
+	/** Terrain textures seen on the modern client's tiles (it has no names to list them by). */
+	private readonly seenTextures = new Set<number>();
+
+	/**
+	 * Textures the paint brush can use: every terrain texture (Tileset\...) in the original
+	 * client; those on the tiles seen so far in the modern one.
+	 */
+	async listTerrainTextures(): Promise<TerrainTexture[]> {
+		const storage = this.storage;
+		if (storage instanceof VanillaStorage) {
+			const paths = await storage.mpq.listFiles();
+			return paths
+				.filter((p) => /^tileset[\\/].*\.blp$/i.test(p) && !/_[sh]\.blp$/i.test(p))
+				.map((p) => ({ ref: p, id: storage.idOf(p), name: p.split(/[\\/]/).slice(1).join(' / ').replace(/\.blp$/i, '') }))
+				.sort((a, b) => a.name.localeCompare(b.name));
+		}
+		return [...this.seenTextures].map((id) => ({ ref: `#${id}`, id, name: `Texture ${id}` }));
+	}
+
+	async loadNearTile(wdtFdid: number, x: number, y: number, compressed: boolean, edits?: SurfaceEdits): Promise<NearTile> {
+		if (isSandbox(wdtFdid)) return this.sandboxNearTile(x, y, edits);
 		const wdt = await this.maps.wdt(wdtFdid);
 		const tile = wdt.tiles[y * 64 + x];
 		if (!tile) throw new Error(`Map has no tile ${x}_${y}`);
 		// The original client: one file per tile, holding the ground and its texture layers.
-		if (this.storage instanceof VanillaStorage) return this.vanillaNearTile(tile.files.root, x, y);
+		if (this.storage instanceof VanillaStorage) return this.vanillaNearTile(tile.files.root, x, y, edits);
 		const [rootBytes, texBytes, kindOf, groundEffects] = await Promise.all([
 			this.storage.readFile(tile.files.root),
 			tile.files.tex0 ? this.storage.readFile(tile.files.tex0).catch(() => null) : null,
@@ -246,6 +283,9 @@ export class WorldLoader {
 			this.groundEffects(),
 		]);
 		const root = parseAdtRoot(rootBytes);
+		const names = this.textureNames();
+		// Edited water first: the liquids are built from the root before the layers are read.
+		applySurfaceEdits(root, null, edits?.water ? { water: edits.water } : undefined, names);
 		const liquids = buildLiquidMeshes(root.liquids, kindOf);
 		const flow = liquids.length && tile.flowMap ? await this.readTexture(tile.flowMap, Infinity, false) : null;
 		const sea = new Uint8Array(256);
@@ -257,9 +297,12 @@ export class WorldLoader {
 
 		if (texBytes) {
 			const tex = parseAdtTex(texBytes, (wdt.flags & MPHD_BIG_ALPHA) !== 0, (i) => !(root.chunks[i]?.flags & MCNK_DO_NOT_FIX_ALPHA));
+			applySurfaceEdits(root, tex, edits?.paint ? { paint: edits.paint } : undefined, names);
+			for (const id of tex.diffuse) if (id) this.seenTextures.add(id);
 			const terrain = buildSplatTerrain(root, tex);
 			const clutter = groundEffects?.source(root, tex, terrain.heights, tileGrids(root).inner, terrain.holes) ?? null;
-			return { x, y, terrain, fallback: null, heights: terrain.heights, holes: terrain.holes, liquids, sea, areaIds, clutter, flow };
+			const surface = surfaceState(root, tex, names, kindOf);
+			return { x, y, terrain, fallback: null, heights: terrain.heights, holes: terrain.holes, liquids, sea, areaIds, clutter, flow, surface };
 		}
 		const grids = tileGrids(root);
 		return {
@@ -277,13 +320,16 @@ export class WorldLoader {
 			areaIds,
 			clutter: null,
 			flow,
+			surface: null,
 		};
 	}
 
 	/** A tile of an original (1.12) client's map, from its single ADT. Water and objects come later. */
-	private async vanillaNearTile(adt: number, x: number, y: number): Promise<NearTile> {
+	private async vanillaNearTile(adt: number, x: number, y: number, edits?: SurfaceEdits): Promise<NearTile> {
 		const storage = this.storage as VanillaStorage;
 		const { root, tex } = parseVanillaAdt(await storage.readFile(adt), (p) => storage.idOf(p));
+		const names = this.textureNames();
+		applySurfaceEdits(root, tex, edits, names);
 		const terrain = buildSplatTerrain(root, tex);
 		const groundEffects = await this.groundEffects();
 		const clutter = groundEffects?.source(root, tex, terrain.heights, tileGrids(root).inner, terrain.holes) ?? null;
@@ -294,21 +340,23 @@ export class WorldLoader {
 		for (const l of root.liquids) if (liquidKind(l.type) === 'ocean') sea[l.chunk] = 1;
 		return {
 			x, y, terrain, fallback: null, heights: terrain.heights, holes: terrain.holes, liquids: buildLiquidMeshes(root.liquids, liquidKind),
-			sea, areaIds, clutter, flow: null,
+			sea, areaIds, clutter, flow: null, surface: surfaceState(root, tex, names, liquidKind),
 		};
 	}
 
 	/** A tile of the sandbox's field, built as a read ADT would be (with the grass that grows on it). */
-	private async sandboxNearTile(x: number, y: number): Promise<NearTile> {
+	private async sandboxNearTile(x: number, y: number, edits?: SurfaceEdits): Promise<NearTile> {
 		if (!sandboxHasTile(x, y)) throw new Error(`The sandbox has no tile ${x}_${y}`);
 		const root = sandboxRoot(x, y);
 		const tex = this.storage instanceof VanillaStorage ? sandboxTex(this.storage.idOf(SANDBOX_GRASS_PATH)) : sandboxTex();
+		const names = this.textureNames();
+		applySurfaceEdits(root, tex, edits, names);
 		const terrain = buildSplatTerrain(root, tex);
 		const groundEffects = await this.groundEffects();
 		const clutter = groundEffects?.source(root, tex, terrain.heights, tileGrids(root).inner, terrain.holes) ?? null;
 		return {
-			x, y, terrain, fallback: null, heights: terrain.heights, holes: terrain.holes, liquids: [],
-			sea: new Uint8Array(256), areaIds: new Uint32Array(256), clutter, flow: null,
+			x, y, terrain, fallback: null, heights: terrain.heights, holes: terrain.holes, liquids: buildLiquidMeshes(root.liquids, liquidKind),
+			sea: new Uint8Array(256), areaIds: new Uint32Array(256), clutter, flow: null, surface: surfaceState(root, tex, names, liquidKind),
 		};
 	}
 

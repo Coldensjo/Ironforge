@@ -33,6 +33,18 @@ export class MpqStorage {
 	has(path: string): boolean {
 		return this.archives.some((a) => a.archive.has(path));
 	}
+
+	/** Every file the archives' (listfile)s name, once each (case doesn't matter). */
+	async listFiles(): Promise<string[]> {
+		const seen = new Map<string, string>();
+		for (const { archive } of this.archives) {
+			for (const name of await archive.listFiles().catch(() => [] as string[])) {
+				const key = name.toLowerCase();
+				if (!seen.has(key) && archive.has(name)) seen.set(key, name);
+			}
+		}
+		return [...seen.values()];
+	}
 }
 
 /** Archive names in the order the client loads them: lowest priority first. */

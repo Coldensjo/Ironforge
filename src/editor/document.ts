@@ -4,6 +4,7 @@ import { TILE_SIZE } from '../formats/adt';
 import { spawnKind, spawnPlacement, type SpawnInfo, type SpawnType } from '../explorer/spawns';
 import type { ObjectManager } from '../viewer/objects';
 import { LATTICE_POINTS } from '../viewer/terrainEdit';
+import { copyPaint, copyWater, PAINT_TEXELS, type ChunkPaint, type ChunkWater, type SurfaceEdits } from '../formats/surfaceEdits';
 import type { ContinentPlacement } from '../viewer/terrain';
 
 /**
@@ -37,10 +38,16 @@ export interface TerrainPatch {
 	after: Float32Array;
 }
 
-/** One undoable step: every spawn it changed, and any ground. */
+/** A chunk's paint or water before and after a step (undefined: as the map has it). */
+export type SurfacePatch =
+	| { tile: string; chunk: number; kind: 'paint'; before: ChunkPaint | undefined; after: ChunkPaint | undefined }
+	| { tile: string; chunk: number; kind: 'water'; before: ChunkWater | undefined; after: ChunkWater | undefined };
+
+/** One undoable step: every spawn it changed, and any ground, paint and water. */
 interface Step {
 	changes: SpawnChange[];
 	terrain?: TerrainPatch[];
+	surface?: SurfacePatch[];
 	/** Steps of the same gesture (wheel turns, nudges) fold into one. */
 	merge?: string;
 	time: number;
@@ -53,9 +60,9 @@ const FIRST_NEW_GUID = 9_000_000;
 /** The same for new copies of the map's own models, above any ADT placement's unique ID. */
 const FIRST_NEW_MODEL_ID = 1_000_000_000;
 const DB_NAME = 'mapExplorer';
-/** Version 2 added the ground's height changes, 3 the browser's saved projects. */
-const DB_VERSION = 3;
-const DB_STORES = ['spawnEdits', 'terrainEdits', 'projects'];
+/** Version 2 added the ground's height changes, 3 the browser's saved projects, 4 paint and water. */
+const DB_VERSION = 4;
+const DB_STORES = ['spawnEdits', 'terrainEdits', 'projects', 'paintEdits', 'waterEdits'];
 const EXPORT_FORMAT = 'mapexplorer-spawn-edits';
 
 let database: Promise<IDBDatabase | null> | null = null;
@@ -132,12 +139,47 @@ export class EditStore<T> {
 	}
 }
 
-/** Float32Array <-> base64, for ground in exported files. */
-export function toBase64(values: Float32Array): string {
+/** Typed arrays <-> base64, for ground, paint and water in exported files. */
+export function toBase64(values: Float32Array | Uint8Array): string {
 	const bytes = new Uint8Array(values.buffer, values.byteOffset, values.byteLength);
 	let text = '';
 	for (let i = 0; i < bytes.length; i += 0x8000) text += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
 	return btoa(text);
+}
+
+/** Bytes from base64 (see toBase64). */
+export function bytesFromBase64(text: string): Uint8Array {
+	const raw = atob(text);
+	const bytes = new Uint8Array(raw.length);
+	for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+	return bytes;
+}
+
+/** Paint and water as exported files keep them: per tile, per chunk, the arrays in base64. */
+export type PaintFile = Record<string, Record<string, { textures: string[]; alpha: string }>>;
+export type WaterFile = Record<string, Record<string, { type: number; level: number; cells: string }>>;
+
+export function paintToFile(paint: Map<string, Map<number, ChunkPaint>>): PaintFile {
+	return Object.fromEntries([...paint].map(([tile, chunks]) => [tile, Object.fromEntries([...chunks].map(([c, p]) => [c, { textures: p.textures, alpha: toBase64(p.alpha) }]))]));
+}
+
+export function waterToFile(water: Map<string, Map<number, ChunkWater>>): WaterFile {
+	return Object.fromEntries([...water].map(([tile, chunks]) => [tile, Object.fromEntries([...chunks].map(([c, w]) => [c, { type: w.type, level: w.level, cells: toBase64(w.cells) }]))]));
+}
+
+/** Read back from a file; chunks that don't fit are left out. */
+export function paintFromFile(file: PaintFile | undefined): [string, Record<number, ChunkPaint>][] {
+	return Object.entries(file ?? {}).map(([tile, chunks]) => [tile, Object.fromEntries(Object.entries(chunks).flatMap(([c, p]) => {
+		const alpha = bytesFromBase64(p.alpha);
+		return alpha.length === PAINT_TEXELS * 3 && Array.isArray(p.textures) ? [[Number(c), { textures: p.textures, alpha }]] : [];
+	}))]);
+}
+
+export function waterFromFile(file: WaterFile | undefined): [string, Record<number, ChunkWater>][] {
+	return Object.entries(file ?? {}).map(([tile, chunks]) => [tile, Object.fromEntries(Object.entries(chunks).flatMap(([c, w]) => {
+		const cells = bytesFromBase64(w.cells);
+		return cells.length === 64 ? [[Number(c), { type: w.type, level: w.level, cells }]] : [];
+	}))]);
 }
 
 export function fromBase64(text: string): Float32Array {
@@ -151,6 +193,8 @@ export interface DocumentHost {
 	mapPlacement(mapId: number): ContinentPlacement | null;
 	/** Shows a tile's ground height changes again (if the tile is loaded in detail). */
 	refreshTerrain(tile: string): void;
+	/** Builds a tile again with its paint and water (if it's loaded in detail). */
+	refreshSurface(tile: string): void;
 }
 
 /**
@@ -168,6 +212,11 @@ export class EditDocument {
 	/** Ground height changes per tile (map:x_y), one per lattice point (see HeightTile). */
 	private readonly terrain = new Map<string, Float32Array>();
 	private readonly terrainStore = new EditStore<Float32Array>('terrainEdits');
+	/** Painted chunks' layers and edited chunks' water, per tile (map:x_y) and chunk (y * 16 + x). */
+	private readonly paint = new Map<string, Map<number, ChunkPaint>>();
+	private readonly water = new Map<string, Map<number, ChunkWater>>();
+	private readonly paintStore = new EditStore<Record<number, ChunkPaint>>('paintEdits');
+	private readonly waterStore = new EditStore<Record<number, ChunkWater>>('waterEdits');
 	private undoStack: Step[] = [];
 	private redoStack: Step[] = [];
 
@@ -177,7 +226,7 @@ export class EditDocument {
 	readonly selection = signal<SpawnInfo[]>([]);
 	readonly canUndo = signal(false);
 	readonly canRedo = signal(false);
-	readonly count = computed(() => (this.version.value, this.edits.size + this.terrain.size));
+	readonly count = computed(() => (this.version.value, this.edits.size + this.terrain.size + this.paint.size + this.water.size));
 
 	constructor(private readonly host: DocumentHost) {}
 
@@ -193,6 +242,18 @@ export class EditDocument {
 			this.terrain.set(tile, delta);
 			this.host.refreshTerrain(tile);
 		}
+		const surfaceTiles = new Set<string>();
+		for (const [tile, chunks] of await this.paintStore.all()) {
+			if (this.paint.has(tile)) continue;
+			this.paint.set(tile, new Map(Object.entries(chunks).map(([c, p]) => [Number(c), p])));
+			surfaceTiles.add(tile);
+		}
+		for (const [tile, chunks] of await this.waterStore.all()) {
+			if (this.water.has(tile)) continue;
+			this.water.set(tile, new Map(Object.entries(chunks).map(([c, w]) => [Number(c), w])));
+			surfaceTiles.add(tile);
+		}
+		for (const tile of surfaceTiles) this.host.refreshSurface(tile);
 		this.changed();
 	}
 
@@ -327,6 +388,7 @@ export class EditDocument {
 		batch(() => {
 			for (const c of [...step.changes].reverse()) this.apply(c.id, c.before);
 			for (const t of step.terrain ?? []) this.applyTerrain(t, t.before);
+			this.applySurface(step.surface ?? [], 'before');
 			this.redoStack.push(step);
 			this.refreshSelection();
 			this.changed();
@@ -339,6 +401,7 @@ export class EditDocument {
 		batch(() => {
 			for (const c of step.changes) this.apply(c.id, c.after);
 			for (const t of step.terrain ?? []) this.applyTerrain(t, t.after);
+			this.applySurface(step.surface ?? [], 'after');
 			this.undoStack.push(step);
 			this.refreshSelection();
 			this.changed();
@@ -399,6 +462,88 @@ export class EditDocument {
 		this.host.refreshTerrain(patch.tile);
 	}
 
+	// --- Paint and water ---
+
+	/** A tile's paint and water edits, as the worker applies them when it builds the tile. */
+	surfaceEdits(tile: string): SurfaceEdits | undefined {
+		const paint = this.paint.get(tile);
+		const water = this.water.get(tile);
+		if (!paint && !water) return undefined;
+		return {
+			paint: paint && Object.fromEntries(paint),
+			water: water && Object.fromEntries(water),
+		};
+	}
+
+	/** A chunk's painted layers or edited water, if it has them. */
+	paintOf(tile: string, chunk: number): ChunkPaint | undefined {
+		return this.paint.get(tile)?.get(chunk);
+	}
+
+	waterOf(tile: string, chunk: number): ChunkWater | undefined {
+		return this.water.get(tile)?.get(chunk);
+	}
+
+	/** Sets a chunk's paint or water as a brush works (not a step yet; see commitSurface). Undefined: back to the map's. */
+	setPaint(tile: string, chunk: number, paint: ChunkPaint | undefined): void {
+		this.setChunk(this.paint, tile, chunk, paint);
+	}
+
+	setWater(tile: string, chunk: number, water: ChunkWater | undefined): void {
+		this.setChunk(this.water, tile, chunk, water);
+	}
+
+	private setChunk<T>(map: Map<string, Map<number, T>>, tile: string, chunk: number, value: T | undefined): void {
+		let chunks = map.get(tile);
+		if (value === undefined) {
+			chunks?.delete(chunk);
+			if (chunks && !chunks.size) map.delete(tile);
+			return;
+		}
+		if (!chunks) map.set(tile, (chunks = new Map()));
+		chunks.set(chunk, value);
+	}
+
+	/** Records chunks a brush already changed as a step, and saves their tiles. */
+	commitSurface(patches: SurfacePatch[]): void {
+		if (!patches.length) return;
+		this.undoStack.push({ changes: [], surface: patches, time: performance.now() });
+		this.redoStack = [];
+		this.saveSurface(patches);
+		this.changed();
+	}
+
+	/** Puts one side of a step's paint and water back, shows it and saves it. */
+	private applySurface(patches: SurfacePatch[], side: 'before' | 'after'): void {
+		for (const p of patches) {
+			const value = p[side];
+			if (p.kind === 'paint') this.setPaint(p.tile, p.chunk, value && copyPaint(value as ChunkPaint));
+			else this.setWater(p.tile, p.chunk, value && copyWater(value as ChunkWater));
+		}
+		this.saveSurface(patches);
+		for (const tile of new Set(patches.map((p) => p.tile))) this.host.refreshSurface(tile);
+	}
+
+	private saveSurface(patches: SurfacePatch[]): void {
+		for (const tile of new Set(patches.filter((p) => p.kind === 'paint').map((p) => p.tile))) {
+			const chunks = this.paint.get(tile);
+			void this.paintStore.put(tile, chunks && Object.fromEntries(chunks));
+		}
+		for (const tile of new Set(patches.filter((p) => p.kind === 'water').map((p) => p.tile))) {
+			const chunks = this.water.get(tile);
+			void this.waterStore.put(tile, chunks && Object.fromEntries(chunks));
+		}
+	}
+
+	/** Painted and flooded tiles, for exports: per tile, its chunks' edits. */
+	paintEdits(): Record<string, Record<number, ChunkPaint>> {
+		return Object.fromEntries([...this.paint].map(([tile, chunks]) => [tile, Object.fromEntries(chunks)]));
+	}
+
+	waterEdits(): Record<string, Record<number, ChunkWater>> {
+		return Object.fromEntries([...this.water].map(([tile, chunks]) => [tile, Object.fromEntries(chunks)]));
+	}
+
 	/** A guid no spawn of this type on this map has. */
 	nextGuid(type: SpawnType, map: number): number {
 		const prefix = `${map}:${type}:`;
@@ -412,12 +557,15 @@ export class EditDocument {
 	/** Every edit, as a file to keep or share. */
 	exportJson(): string {
 		const terrain = Object.fromEntries([...this.terrain].map(([tile, delta]) => [tile, toBase64(delta)]));
-		return JSON.stringify({ format: EXPORT_FORMAT, version: 2, edits: Object.fromEntries(this.edits), terrain });
+		return JSON.stringify({
+			format: EXPORT_FORMAT, version: 3, edits: Object.fromEntries(this.edits), terrain,
+			paint: paintToFile(this.paint), water: waterToFile(this.water),
+		});
 	}
 
 	/** Adds the edits in a file made by exportJson; returns how many. Not undoable. */
 	importJson(text: string): number {
-		const file = JSON.parse(text) as { format?: string; edits?: Record<string, SpawnEdit>; terrain?: Record<string, string> };
+		const file = JSON.parse(text) as { format?: string; edits?: Record<string, SpawnEdit>; terrain?: Record<string, string>; paint?: PaintFile; water?: WaterFile };
 		if (file.format !== EXPORT_FORMAT || !file.edits) throw new Error('Not a MapExplorer edits file');
 		let n = 0;
 		batch(() => {
@@ -434,6 +582,20 @@ export class EditDocument {
 				this.host.refreshTerrain(tile);
 				n++;
 			}
+			const surfaceTiles = new Set<string>();
+			for (const [tile, chunks] of paintFromFile(file.paint)) {
+				for (const [c, p] of Object.entries(chunks)) this.setPaint(tile, Number(c), p);
+				void this.paintStore.put(tile, this.paint.has(tile) ? Object.fromEntries(this.paint.get(tile)!) : undefined);
+				surfaceTiles.add(tile);
+				n++;
+			}
+			for (const [tile, chunks] of waterFromFile(file.water)) {
+				for (const [c, w] of Object.entries(chunks)) this.setWater(tile, Number(c), w);
+				void this.waterStore.put(tile, this.water.has(tile) ? Object.fromEntries(this.water.get(tile)!) : undefined);
+				surfaceTiles.add(tile);
+				n++;
+			}
+			for (const tile of surfaceTiles) this.host.refreshSurface(tile);
 			this.undoStack = [];
 			this.redoStack = [];
 			this.refreshSelection();
@@ -452,6 +614,12 @@ export class EditDocument {
 			this.terrain.clear();
 			for (const tile of tiles) this.host.refreshTerrain(tile);
 			void this.terrainStore.clear();
+			const surfaceTiles = new Set([...this.paint.keys(), ...this.water.keys()]);
+			this.paint.clear();
+			this.water.clear();
+			for (const tile of surfaceTiles) this.host.refreshSurface(tile);
+			void this.paintStore.clear();
+			void this.waterStore.clear();
 			void this.store.clear();
 			this.undoStack = [];
 			this.redoStack = [];
@@ -491,12 +659,16 @@ export class EditDocument {
  * Replaces the working copy saved in the browser (what the document loads) with a project's
  * edits and ground, before the world loads; the document then reads them as it starts.
  */
-export async function replaceWorkingCopy(edits: Record<string, SpawnEdit>, terrain: Record<string, string>): Promise<void> {
+export async function replaceWorkingCopy(edits: Record<string, SpawnEdit>, terrain: Record<string, string>, paint?: PaintFile, water?: WaterFile): Promise<void> {
 	const spawns = new EditStore<SpawnEdit>('spawnEdits');
 	const ground = new EditStore<Float32Array>('terrainEdits');
-	await Promise.all([spawns.clear(), ground.clear()]);
+	const painted = new EditStore<Record<number, ChunkPaint>>('paintEdits');
+	const flooded = new EditStore<Record<number, ChunkWater>>('waterEdits');
+	await Promise.all([spawns.clear(), ground.clear(), painted.clear(), flooded.clear()]);
 	await Promise.all([
 		...Object.entries(edits).map(([id, edit]) => spawns.put(id, edit)),
 		...Object.entries(terrain).map(([tile, data]) => ground.put(tile, fromBase64(data))),
+		...paintFromFile(paint).map(([tile, chunks]) => painted.put(tile, chunks)),
+		...waterFromFile(water).map(([tile, chunks]) => flooded.put(tile, chunks)),
 	]);
 }

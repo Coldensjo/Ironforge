@@ -68,8 +68,11 @@ const api: AsyncStorageApi = {
 	async loadTileTextures(wdtFdid, coords, maxSize, compressed) {
 		return requireWorld().loadTileTextures(wdtFdid, coords, maxSize, compressed);
 	},
-	async loadNearTile(wdtFdid, x, y, compressed) {
-		return requireWorld().loadNearTile(wdtFdid, x, y, compressed);
+	async loadNearTile(wdtFdid, x, y, compressed, edits) {
+		return requireWorld().loadNearTile(wdtFdid, x, y, compressed, edits);
+	},
+	async listTerrainTextures() {
+		return requireWorld().listTerrainTextures();
 	},
 	async loadTextures(fdids, compressed) {
 		return requireWorld().loadTextures(fdids, compressed);
@@ -122,8 +125,8 @@ const api: AsyncStorageApi = {
 	async templateSpawn(type, entry, mapId, guid) {
 		return requireWorld().templateSpawn(type, entry, mapId, guid);
 	},
-	async exportMapPatch(models, terrain) {
-		return requireWorld().exportMapPatch(models, terrain);
+	async exportMapPatch(models, terrain, paint, water) {
+		return requireWorld().exportMapPatch(models, terrain, paint, water);
 	},
 };
 

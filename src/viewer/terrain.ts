@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { TILE_CELLS, TILE_SIZE } from '../formats/adt';
 import { WDL_CELLS } from '../formats/wdl';
 import { ALPHA_ATLAS_SIZE, type SplatGeometry } from '../explorer/splatMesh';
+import type { SurfaceState } from '../explorer/surface';
+import type { SurfaceEdits } from '../formats/surfaceEdits';
 import type { FarTile, NearTile } from '../explorer/world';
 import type { TerrainGeometry } from '../explorer/terrainMesh';
 import type { AsyncStorageApi } from '../worker/protocol';
@@ -65,6 +67,8 @@ interface TileState {
 	heightTile: HeightTile | null;
 	/** Its full-detail files couldn't be read: not tried again. */
 	nearFailed: boolean;
+	/** Painted or flooded while being built in detail: build it again after. */
+	rebuild?: boolean;
 	distance: number;
 	objectLevel: ObjectLevel;
 }
@@ -82,6 +86,23 @@ interface NearState {
 	liquids: THREE.Mesh[];
 	/** What the editor reshapes: the ground mesh and the heights read from it. */
 	ground: HeightTargets | null;
+	/** What the editor paints: the alpha atlas (its data changed in place) and each chunk's layers and water. */
+	alpha: THREE.DataTexture | null;
+	surface: SurfaceState | null;
+}
+
+/** A detailed tile as the paint and water brushes work on it. */
+export interface SurfaceTarget {
+	/** Its name for edits (map:x_y). */
+	key: string;
+	originX: number;
+	originZ: number;
+	/** Each chunk's layers and water, as the tile was built (with the edits it was built with). */
+	surface: SurfaceState;
+	/** The alpha atlas: 1024x1024 RGBA, each chunk's 64x64 maps of layers 1-3 in R, G, B. */
+	atlas: Uint8Array;
+	/** After changing the atlas: shows it. */
+	atlasChanged(): void;
 }
 
 export interface TerrainStats {
@@ -149,6 +170,8 @@ export class TerrainManager {
 	clutter: ClutterManager | null = null;
 	/** The editor's height changes for a tile (by heightKey), applied as it loads in detail. */
 	heightDelta: (key: string) => Float32Array | undefined = () => undefined;
+	/** The editor's paint and water for a tile (by heightKey), applied as it's built. */
+	surfaceEdits: (key: string) => SurfaceEdits | undefined = () => undefined;
 
 	constructor(
 		private readonly storage: AsyncStorageApi,
@@ -501,7 +524,7 @@ export class TerrainManager {
 		t.nearLoading = true;
 		this.nearInFlight++;
 		try {
-			const tile = await this.storage.loadNearTile(t.continent.wdt, t.x, t.y, this.compressed);
+			const tile = await this.storage.loadNearTile(t.continent.wdt, t.x, t.y, this.compressed, this.surfaceEdits(TerrainManager.heightKey(t)));
 			const sharedTextures = tile.terrain?.textures ?? [];
 			const textures = await this.layerTextures.acquire(sharedTextures);
 			// The camera may have moved on while this loaded.
@@ -511,6 +534,12 @@ export class TerrainManager {
 			}
 			const near = perf.time('near.build', () => this.buildNear(tile, textures, sharedTextures, t.originX, t.originZ));
 			await this.prepare(near.object);
+			// Built again (after the editor's paint or water changed it): the old one goes as the new one comes.
+			if (t.near) {
+				this.disposeNear(t.near);
+				this.clutter?.removeTile(TerrainManager.objectKey(t));
+				t.heightTile = null;
+			}
 			t.near = near;
 			t.near.object.position.set(t.originX, 0, t.originZ);
 			t.near.object.updateMatrixWorld(true);
@@ -533,12 +562,51 @@ export class TerrainManager {
 		} finally {
 			t.nearLoading = false;
 			this.nearInFlight--;
+			// Edited again while it was being built: build it once more.
+			if (t.rebuild) {
+				t.rebuild = false;
+				if (t.near) void this.loadNear(t);
+			}
 		}
+	}
+
+	/**
+	 * Builds a detailed tile again with the editor's current paint and water (by heightKey), and
+	 * swaps it in when it's ready; if it's being built already, once more after that.
+	 */
+	refreshSurface(key: string): void {
+		for (const t of this.tiles.values()) {
+			if (TerrainManager.heightKey(t) !== key || !t.near) continue;
+			if (t.nearLoading) t.rebuild = true;
+			else void this.loadNear(t);
+		}
+	}
+
+	/** The detailed tiles in a box of the world (x, z), as the paint and water brushes work on them. */
+	surfaceTargetsIn(minX: number, minZ: number, maxX: number, maxZ: number): SurfaceTarget[] {
+		const out: SurfaceTarget[] = [];
+		for (let gy = Math.floor(minZ / TILE_SIZE); gy <= Math.floor(maxZ / TILE_SIZE); gy++) {
+			for (let gx = Math.floor(minX / TILE_SIZE); gx <= Math.floor(maxX / TILE_SIZE); gx++) {
+				const t = this.tiles.get(TerrainManager.key(gx, gy));
+				const near = t?.near;
+				if (!t || !near?.alpha || !near.surface) continue;
+				const texture = near.alpha;
+				out.push({
+					key: TerrainManager.heightKey(t), originX: t.originX, originZ: t.originZ, surface: near.surface,
+					atlas: texture.image.data as Uint8Array,
+					atlasChanged: () => (texture.needsUpdate = true),
+				});
+			}
+		}
+		return out;
 	}
 
 	/** originX, originZ: the tile's corner in the world, where it will be placed. */
 	private buildNear(tile: NearTile, textures: Map<number, THREE.Texture | null>, sharedTextures: number[], originX: number, originZ: number): NearState {
-		const state: NearState = { object: new THREE.Group(), geometries: [], materials: [], ownTextures: [], flowMaterials: [], sharedTextures, liquids: [], ground: null };
+		const state: NearState = {
+			object: new THREE.Group(), geometries: [], materials: [], ownTextures: [], flowMaterials: [], sharedTextures, liquids: [], ground: null,
+			alpha: null, surface: tile.surface,
+		};
 		const add = (geometry: THREE.BufferGeometry, material: THREE.Material | THREE.Material[]) => {
 			const mesh = new THREE.Mesh(geometry, material);
 			mesh.matrixAutoUpdate = false;
@@ -551,6 +619,7 @@ export class TerrainManager {
 		if (tile.terrain) {
 			const alpha = createAlphaTexture(tile.terrain.alpha, ALPHA_ATLAS_SIZE);
 			state.ownTextures.push(alpha);
+			state.alpha = alpha;
 			const geometry = toBufferGeometry(tile.terrain.geometry);
 			const materials = tile.terrain.groups.map((g, i) => {
 				geometry.addGroup(g.start, g.count, i);
@@ -593,15 +662,19 @@ export class TerrainManager {
 		return state;
 	}
 
-	private dropNear(t: TileState): void {
-		if (!t.near) return;
-		const near = t.near;
+	/** Takes a detailed tile's meshes out and frees what it made. */
+	private disposeNear(near: NearState): void {
 		this.group.remove(near.object);
 		for (const g of near.geometries) g.dispose();
 		for (const m of near.materials) m.dispose();
 		for (const tex of near.ownTextures) tex.dispose();
 		for (const m of near.flowMaterials) releaseLiquidMaterial(m);
 		this.layerTextures.release(near.sharedTextures);
+	}
+
+	private dropNear(t: TileState): void {
+		if (!t.near) return;
+		this.disposeNear(t.near);
 		perf.record('near.drop', 0);
 		this.clutter?.removeTile(TerrainManager.objectKey(t));
 		t.near = null;

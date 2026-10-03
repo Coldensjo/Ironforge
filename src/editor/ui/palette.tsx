@@ -3,7 +3,9 @@ import type { BrushKind } from '../sculpt';
 import { matchScore, searchKey } from '../../app/search';
 import { spawnFile } from '../../explorer/spawns';
 import { creatureIcon, type IconName } from '../../ui/wowSkin';
-import type { Stamp } from '../viewport';
+import type { Stamp, TerrainMode } from '../viewport';
+import type { TerrainTexture } from '../../explorer/world';
+import type { WaterType } from '../../formats/surfaceEdits';
 import { Check, Icon, Panel, Slot } from './common';
 import type { EditorContext } from './context';
 
@@ -17,7 +19,7 @@ const CATEGORIES: [Category, IconName, string][] = [
 	['props', 'props', 'Props: furniture, barrels, lamps, signs…'],
 	['buildings', 'town', 'Buildings'],
 	['effects', 'effects', 'Effects: glows, smoke, particles'],
-	['terrain', 'terrain', 'Terrain: raise, lower, flatten and smooth the ground'],
+	['terrain', 'terrain', 'Terrain: shape, paint and flood the ground'],
 	['recent', 'recent', 'Placed lately'],
 ];
 
@@ -293,12 +295,35 @@ function BrushSlider({ label, value, min, max, step, show, onInput, title }: {
 	);
 }
 
-/** The terrain brushes: which one, how big, how strong and how soft its edge. */
+/** The terrain tool's modes: shape the ground, paint it, flood it. */
+const TERRAIN_MODES: [TerrainMode, string][] = [['sculpt', 'Sculpt'], ['paint', 'Paint'], ['water', 'Water']];
+
+/** The terrain tool: its mode, then that mode's brush settings. */
 function TerrainPanel({ ctx }: { ctx: EditorContext }) {
+	const mode = ctx.viewport.terrainMode.value;
+	return (
+		<div class="ed-terrain">
+			<div class="ed-groups ed-modes" role="tablist">
+				{TERRAIN_MODES.map(([m, label]) => (
+					<button class={`ed-chip ${mode === m ? 'on' : ''}`} role="tab" aria-selected={mode === m} onClick={() => {
+						ctx.viewport.terrainMode.value = m;
+						ctx.viewport.tool.value = 'sculpt';
+					}}>{label}</button>
+				))}
+			</div>
+			{mode === 'sculpt' && <SculptPanel ctx={ctx} />}
+			{mode === 'paint' && <PaintPanel ctx={ctx} />}
+			{mode === 'water' && <WaterPanel ctx={ctx} />}
+		</div>
+	);
+}
+
+/** The sculpt brushes: which one, how big, how strong and how soft its edge. */
+function SculptPanel({ ctx }: { ctx: EditorContext }) {
 	const brush = ctx.viewport.brush;
 	const kind = brush.kind.value;
 	return (
-		<div class="ed-terrain">
+		<>
 			<div class="ed-brushes">
 				{BRUSHES.map(([k, icon, label, key]) => (
 					<div class="ed-brush">
@@ -317,6 +342,130 @@ function TerrainPanel({ ctx }: { ctx: EditorContext }) {
 				Hold the left mouse button on the ground. Shift swaps raise and lower; flatten levels to the height where you
 				started. Each stroke is one step to undo. Only ground near the camera (in full detail) can be shaped.
 			</p>
-		</div>
+		</>
+	);
+}
+
+/** Every texture the paint brush can use, read once. */
+let textureList: Promise<TerrainTexture[]> | null = null;
+const thumbnails = new Map<number, Promise<string | null>>();
+const THUMB_SIZE = 40;
+const TEXTURE_LIMIT = 60;
+
+/** A texture as a small picture, made once. */
+function thumbnail(ctx: EditorContext, id: number): Promise<string | null> {
+	let url = thumbnails.get(id);
+	if (!url) {
+		url = ctx.storage.loadImages([id]).then(([image]) => {
+			if (!image) return null;
+			const full = document.createElement('canvas');
+			full.width = image.width;
+			full.height = image.height;
+			full.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(image.rgba), image.width, image.height), 0, 0);
+			const small = document.createElement('canvas');
+			small.width = small.height = THUMB_SIZE;
+			small.getContext('2d')!.drawImage(full, 0, 0, THUMB_SIZE, THUMB_SIZE);
+			return small.toDataURL();
+		}, () => null);
+		thumbnails.set(id, url);
+	}
+	return url;
+}
+
+function TextureThumb({ ctx, id }: { ctx: EditorContext; id: number }) {
+	const [url, setUrl] = useState<string | null>(null);
+	useEffect(() => {
+		let live = true;
+		void thumbnail(ctx, id).then((u) => live && setUrl(u));
+		return () => {
+			live = false;
+		};
+	}, [id]);
+	return <span class="ed-texture-thumb" style={url ? { backgroundImage: `url(${url})` } : undefined} />;
+}
+
+/** The paint brush: the texture (those on the ground nearby first, or searched), and the brush. */
+function PaintPanel({ ctx }: { ctx: EditorContext }) {
+	const brush = ctx.viewport.paint;
+	const chosen = brush.texture.value;
+	const [all, setAll] = useState<TerrainTexture[]>([]);
+	const [query, setQuery] = useState('');
+	const [nearby, setNearby] = useState<string[]>([]);
+	useEffect(() => {
+		textureList ??= ctx.storage.listTerrainTextures().catch(() => []);
+		void textureList.then(setAll);
+		setNearby(ctx.viewport.nearbyTextures());
+	}, []);
+	const byRef = useMemo(() => new Map(all.map((t) => [t.ref.toLowerCase(), t])), [all]);
+	const entry = (ref: string): TerrainTexture | undefined => byRef.get(ref.toLowerCase()) ?? (ref.startsWith('#') ? { ref, id: Number(ref.slice(1)), name: `Texture ${ref.slice(1)}` } : undefined);
+	const shown = useMemo(() => {
+		const q = searchKey(query.trim());
+		if (!q) return nearby.map(entry).filter((t): t is TerrainTexture => !!t);
+		const words = q.split(/\s+/);
+		return all.filter((t) => words.every((w) => searchKey(t.name).includes(w))).slice(0, TEXTURE_LIMIT);
+	}, [query, all, nearby, byRef]);
+	const current = chosen ? entry(chosen) : undefined;
+	return (
+		<>
+			<div class="ed-texture-chosen">
+				{current ? <TextureThumb ctx={ctx} id={current.id} /> : <span class="ed-texture-thumb" />}
+				<span class={current ? 'wow-label' : 'wow-muted'}>{current?.name ?? 'Choose a texture below'}</span>
+			</div>
+			<BrushSlider label="Size" value={brush.size.value} min={2} max={80} step={1} show={(v) => `${v} yd`} onInput={(v) => (brush.size.value = v)} title="Brush radius (Alt+wheel)" />
+			<BrushSlider label="Strength" value={brush.strength.value} min={0.05} max={1} step={0.05} show={(v) => `${Math.round(v * 100)}%`} onInput={(v) => (brush.strength.value = v)} title="How fast it paints (Ctrl+wheel)" />
+			<BrushSlider label="Softness" value={brush.softness.value} min={0} max={1} step={0.05} show={(v) => `${Math.round(v * 100)}%`} onInput={(v) => (brush.softness.value = v)} title="How much of the brush fades out towards its edge" />
+			<input class="ed-search" type="search" placeholder={all.length ? `Search ${all.length} textures…` : 'Search textures…'} value={query}
+				onInput={(e) => setQuery((e.target as HTMLInputElement).value)} />
+			{!query && <div class="wow-muted ed-hint">{nearby.length ? 'On the ground nearby:' : 'Search, or come close to the ground to see its textures.'}</div>}
+			<ul class="ed-list ed-textures">
+				{shown.map((t) => (
+					<li>
+						<button class={`ed-texture ${chosen && chosen.toLowerCase() === t.ref.toLowerCase() ? 'on' : ''}`} title={t.name} onClick={() => {
+							brush.texture.value = t.ref;
+							ctx.viewport.tool.value = 'sculpt';
+						}}>
+							<TextureThumb ctx={ctx} id={t.id} />
+							<span>{t.name.split(' / ').pop()}</span>
+						</button>
+					</li>
+				))}
+			</ul>
+		</>
+	);
+}
+
+const WATER_KINDS: [Exclude<WaterType, 'none'>, string][] = [['water', 'Water'], ['ocean', 'Ocean'], ['magma', 'Magma'], ['slime', 'Slime']];
+
+/** The water brush: what it floods with, adding or drying, and at what level. */
+function WaterPanel({ ctx }: { ctx: EditorContext }) {
+	const brush = ctx.viewport.water;
+	const fixed = brush.level.value;
+	return (
+		<>
+			<div class="ed-groups">
+				{WATER_KINDS.map(([k, label]) => (
+					<button class={`ed-chip ${brush.type.value === k ? 'on' : ''}`} onClick={() => (brush.type.value = k)}>{label}</button>
+				))}
+			</div>
+			<div class="ed-groups">
+				<button class={`ed-chip ${brush.mode.value === 'add' ? 'on' : ''}`} onClick={() => (brush.mode.value = 'add')}>Flood</button>
+				<button class={`ed-chip ${brush.mode.value === 'remove' ? 'on' : ''}`} onClick={() => (brush.mode.value = 'remove')}>Dry</button>
+			</div>
+			<BrushSlider label="Size" value={brush.size.value} min={2} max={80} step={1} show={(v) => `${v} yd`} onInput={(v) => (brush.size.value = v)} title="Brush radius (Alt+wheel)" />
+			<Check checked={fixed !== null} onChange={(on) => void (brush.level.value = on ? Math.round(brush.lastLevel * 2) / 2 : null)}
+				title="Off: each stroke takes the level of the water it starts in, or a little above the ground">Fixed level</Check>
+			{fixed !== null
+				? <label class="ed-slider" title="Height of the water's surface (yards)">
+					<span class="wow-label">Level</span>
+					<input type="number" step={0.5} value={fixed} onChange={(e) => (brush.level.value = Number((e.target as HTMLInputElement).value))} />
+					<output>yd</output>
+				</label>
+				: <BrushSlider label="Depth" value={brush.depth.value} min={0.5} max={10} step={0.5} show={(v) => `${v} yd`} onInput={(v) => (brush.depth.value = v)} title="How deep new water is, over the ground where a stroke starts on dry land" />}
+			<p class="wow-muted ed-hint">
+				Hold the left mouse button over the ground. Each stroke floods at one level: the water it starts in, else a little above
+				the ground. Shift dries instead. A chunk (about 33 yards) holds one flat liquid, so flooding part of one sets the whole of
+				its liquid to that level.
+			</p>
+		</>
 	);
 }

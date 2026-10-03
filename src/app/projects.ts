@@ -49,10 +49,10 @@ export class Projects {
 
 	/** The project as a file: its world, the camera, and every edit. */
 	private file(name: string, world: Session['world']): ProjectFile {
-		const { edits, terrain } = JSON.parse(this.doc.exportJson()) as Pick<ProjectFile, 'edits' | 'terrain'>;
+		const { edits, terrain, paint, water } = JSON.parse(this.doc.exportJson()) as Pick<ProjectFile, 'edits' | 'terrain' | 'paint' | 'water'>;
 		const link = this.viewer.shareLink();
 		const view = link.includes('#') ? link.slice(link.indexOf('#')) : undefined;
-		return { format: PROJECT_FORMAT, version: 1, name, world, view, edits, terrain: terrain ?? {}, saved: new Date().toISOString() };
+		return { format: PROJECT_FORMAT, version: 1, name, world, view, edits, terrain: terrain ?? {}, paint: paint ?? {}, water: water ?? {}, saved: new Date().toISOString() };
 	}
 
 	/** Saves the project where it was saved before, or (as, or never saved) where the user picks. */

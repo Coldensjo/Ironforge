@@ -9,6 +9,7 @@ import { RING_HANDLE_ARC, type SelectionOutline } from '../viewer/outline';
 import type { ContinentPlacement } from '../viewer/terrain';
 import { spawnId, type EditDocument, type SpawnEdit } from './document';
 import { TerrainBrush, type BrushKind, type SculptHost } from './sculpt';
+import { PaintBrush, WaterBrush, type SurfaceHost } from './surfaceBrush';
 
 const MAP_ORIGIN = 32 * TILE_SIZE;
 /** Pixels the mouse moves with a button down before a click becomes a drag. */
@@ -44,6 +45,8 @@ const WORLD_TO_CONTINENT = new THREE.Quaternion().setFromRotationMatrix(new THRE
 const CONTINENT_TO_WORLD = WORLD_TO_CONTINENT.clone().invert();
 
 export type Tool = 'select' | 'move' | 'rotate' | 'scale' | 'place' | 'sculpt';
+/** What the terrain tool (T) does: shape the ground, paint it, or flood it. */
+export type TerrainMode = 'sculpt' | 'paint' | 'water';
 
 /**
  * Something chosen in the palette, to put down where clicked: an NPC or game object template
@@ -56,7 +59,7 @@ export interface Stamp {
 }
 
 /** What the viewport needs from the viewer. */
-export interface EditorHost extends SculptHost {
+export interface EditorHost extends SculptHost, SurfaceHost {
 	/** Shows a tile's ground height changes again (if the tile is loaded in detail). */
 	refreshTerrain(tile: string): void;
 	canvas: HTMLCanvasElement;
@@ -150,8 +153,11 @@ export class EditorViewport {
 	readonly clipboard = signal<SpawnInfo[]>([]);
 	/** A line for the status bar about what the mouse would do. */
 	readonly hint = signal('');
-	/** The terrain brushes (the sculpt tool). */
+	/** The terrain brushes (the terrain tool, T): shaping, painting, and water. */
 	readonly brush: TerrainBrush;
+	readonly paint: PaintBrush;
+	readonly water: WaterBrush;
+	readonly terrainMode = signal<TerrainMode>('sculpt');
 
 	private readonly raycaster = new THREE.Raycaster();
 	private readonly mouse = new THREE.Vector2();
@@ -174,6 +180,8 @@ export class EditorViewport {
 		this.marquee.hidden = true;
 		document.body.append(this.marquee);
 		this.brush = new TerrainBrush(host, doc);
+		this.paint = new PaintBrush(host, doc);
+		this.water = new WaterBrush(host, doc);
 		host.canvas.addEventListener('pointerleave', () => (this.overView = false));
 
 		const canvas = host.canvas;
@@ -196,7 +204,11 @@ export class EditorViewport {
 			this.updateHint();
 		});
 		this.tool.subscribe(() => {
-			if (this.tool.value !== 'sculpt') this.brush.end();
+			if (this.tool.value !== 'sculpt') this.endStrokes();
+			this.updateHint();
+		});
+		this.terrainMode.subscribe(() => {
+			this.endStrokes();
 			this.updateHint();
 		});
 		this.brush.kind.subscribe(() => this.updateHint());
@@ -206,15 +218,42 @@ export class EditorViewport {
 		return workspace.value === 'edit';
 	}
 
+	/** The terrain tool's brush for its mode. */
+	private get terrainBrush(): TerrainBrush | PaintBrush | WaterBrush {
+		return this.terrainMode.value === 'paint' ? this.paint : this.terrainMode.value === 'water' ? this.water : this.brush;
+	}
+
+	/** Textures on the detailed ground around the camera, most used first (for the paint brush's picker). */
+	nearbyTextures(): string[] {
+		const c = this.host.camera.position;
+		const r = 400;
+		const counts = new Map<string, number>();
+		for (const t of this.host.surfaceTargetsIn(c.x - r, c.z - r, c.x + r, c.z + r)) {
+			for (const list of t.surface.textures) for (const ref of list) counts.set(ref, (counts.get(ref) ?? 0) + 1);
+		}
+		return [...counts].sort((a, b) => b[1] - a[1]).map(([ref]) => ref);
+	}
+
+	/** Finishes any brush stroke under way. */
+	private endStrokes(): void {
+		this.brush.end();
+		this.paint.end();
+		this.water.end();
+	}
+
 	/** Moves the selection circles to the selected spawns, and works the terrain brush; call every frame. */
 	update(): void {
-		const sculpting = this.active && this.tool.value === 'sculpt' && (this.overView || this.brush.active) && !this.host.looking;
+		const terrainBrush = this.terrainBrush;
+		const sculpting = this.active && this.tool.value === 'sculpt' && (this.overView || terrainBrush.active) && !this.host.looking;
 		let center: THREE.Vector3 | null = null;
 		if (sculpting) {
 			this.raycaster.setFromCamera(this.ndc(this.mouse.x, this.mouse.y), this.host.camera);
 			center = this.groundHit(this.raycaster.ray, false);
 		}
-		this.brush.update(center, (x, z) => this.host.heightAt(x, z), this.shift);
+		for (const b of [this.brush, this.paint, this.water]) {
+			if (b === terrainBrush) b.update(center, (x, z) => this.host.heightAt(x, z), this.shift);
+			else b.hide();
+		}
 		const shown = this.active && !document.body.classList.contains('ui-hidden') ? this.doc.selection.value.slice(0, MAX_RINGS) : [];
 		this.host.outline.targets = shown.flatMap((s) => {
 			const placement = this.host.mapPlacement(s.place.map);
@@ -393,7 +432,7 @@ export class EditorViewport {
 		if (this.tool.value === 'sculpt') {
 			this.raycaster.setFromCamera(this.ndc(e.clientX, e.clientY), this.host.camera);
 			const center = this.groundHit(this.raycaster.ray, false);
-			if (center) this.brush.start(center);
+			if (center) this.terrainBrush.start(center);
 			return;
 		}
 		if (this.held?.mode === 'carry') {
@@ -441,8 +480,8 @@ export class EditorViewport {
 	private onPointerUp(e: PointerEvent): void {
 		if (e.button === 2 && this.host.looking) document.exitPointerLock();
 		if (e.button !== 0) return;
-		if (this.brush.active) {
-			this.brush.end();
+		if (this.terrainBrush.active) {
+			this.terrainBrush.end();
 			return;
 		}
 		const press = this.press;
@@ -630,9 +669,10 @@ export class EditorViewport {
 		const direction = -Math.sign(e.deltaY || e.deltaX);
 		const step = (e.shiftKey ? FINE_TURN_STEP : TURN_STEP) * direction;
 		if (this.tool.value === 'sculpt' && (e.altKey || e.ctrlKey || e.metaKey)) {
-			// The brush: Alt+wheel its size, Ctrl+wheel its strength.
-			if (e.altKey) this.brush.size.value = THREE.MathUtils.clamp(Math.round(this.brush.size.value * (direction > 0 ? 1.15 : 1 / 1.15)), 2, 80);
-			else this.brush.strength.value = THREE.MathUtils.clamp(Math.round((this.brush.strength.value + direction * 0.05) * 100) / 100, 0.05, 1);
+			// The brush: Alt+wheel its size, Ctrl+wheel its strength (water has none).
+			const b = this.terrainBrush;
+			if (e.altKey) b.size.value = THREE.MathUtils.clamp(Math.round(b.size.value * (direction > 0 ? 1.15 : 1 / 1.15)), 2, 80);
+			else if ('strength' in b) b.strength.value = THREE.MathUtils.clamp(Math.round((b.strength.value + direction * 0.05) * 100) / 100, 0.05, 1);
 			e.preventDefault();
 			e.stopPropagation();
 			return;
@@ -703,7 +743,7 @@ export class EditorViewport {
 		const tools: Record<string, Tool> = { KeyQ: 'select', KeyW: 'move', KeyE: 'rotate', KeyR: 'scale', KeyT: 'sculpt' };
 		const brushes: Record<string, BrushKind> = { Digit1: 'raise', Digit2: 'lower', Digit3: 'flatten', Digit4: 'smooth' };
 		if (e.key === 'Shift') this.shift = true;
-		if (this.tool.value === 'sculpt' && !ctrl && brushes[e.code]) {
+		if (this.tool.value === 'sculpt' && this.terrainMode.value === 'sculpt' && !ctrl && brushes[e.code]) {
 			this.brush.kind.value = brushes[e.code];
 			return true;
 		}
@@ -727,8 +767,8 @@ export class EditorViewport {
 		else if ((e.code === 'PageUp' || e.code === 'PageDown') && this.doc.selection.value.length) {
 			this.raise((e.shiftKey ? BIG_RAISE_STEP : RAISE_STEP) * (e.code === 'PageUp' ? 1 : -1));
 		} else if (e.code === 'Escape') {
-			if (this.brush.active) {
-				this.brush.cancel();
+			if (this.terrainBrush.active) {
+				this.terrainBrush.cancel();
 				return true;
 			}
 			if (this.held || this.adjust || this.press) this.cancel();
@@ -748,13 +788,20 @@ export class EditorViewport {
 			rotate: 'Drag left and right to turn the selection',
 			scale: 'Drag up and down to resize the selection',
 			place: 'Click to put it down · Shift snaps onto props · wheel turns it, Ctrl+wheel raises it · Esc stops placing',
-			sculpt: {
-				raise: 'Hold the mouse to raise the ground (Shift lowers) · Alt+wheel brush size · Ctrl+wheel strength · 1-4 brushes',
-				lower: 'Hold the mouse to lower the ground (Shift raises) · Alt+wheel brush size · Ctrl+wheel strength · 1-4 brushes',
-				flatten: 'Hold the mouse to level the ground to where you started · Alt+wheel brush size · Ctrl+wheel strength',
-				smooth: 'Hold the mouse to smooth bumps and edges · Alt+wheel brush size · Ctrl+wheel strength',
-			}[this.brush?.kind.value ?? 'raise'],
+			sculpt: this.terrainHint(),
 		}[this.tool.value];
+	}
+
+	/** The terrain tool's hint, for its mode and brush. */
+	private terrainHint(): string {
+		if (this.terrainMode.value === 'paint') return 'Hold the mouse to paint the chosen texture (Shift erases it) · Alt+wheel brush size · Ctrl+wheel strength';
+		if (this.terrainMode.value === 'water') return 'Hold the mouse to flood the ground (Shift dries it) · starts at the water or ground under the mouse · Alt+wheel brush size';
+		return {
+			raise: 'Hold the mouse to raise the ground (Shift lowers) · Alt+wheel brush size · Ctrl+wheel strength · 1-4 brushes',
+			lower: 'Hold the mouse to lower the ground (Shift raises) · Alt+wheel brush size · Ctrl+wheel strength · 1-4 brushes',
+			flatten: 'Hold the mouse to level the ground to where you started · Alt+wheel brush size · Ctrl+wheel strength',
+			smooth: 'Hold the mouse to smooth bumps and edges · Alt+wheel brush size · Ctrl+wheel strength',
+		}[this.brush?.kind.value ?? 'raise'];
 	}
 
 	// --- Geometry ---

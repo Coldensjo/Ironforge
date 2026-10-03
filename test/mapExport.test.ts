@@ -158,3 +158,58 @@ describe.skipIf(!existsSync(join(VANILLA, 'Data', 'terrain.MPQ')))('map patch', 
 		expect(ground.heights[0] - before.heights[0]).toBeCloseTo(25, 3);
 	}, 120000);
 });
+
+describe.skipIf(!existsSync(join(VANILLA, 'Data', 'terrain.MPQ')))('ADT writer: paint and water', () => {
+	it('writes painted layers and edited water the parser reads back', async () => {
+		const { MpqStorage } = await import('../src/mpq/storage');
+		const { VanillaStorage } = await import('../src/mpq/vanillaStorage');
+		const { adtPath, parseVanillaAdt } = await import('../src/formats/vanilla');
+		const { rewriteVanillaAdt } = await import('../src/formats/adtWriter');
+		const { PAINT_TEXELS } = await import('../src/formats/surfaceEdits');
+		const storage = new VanillaStorage(await MpqStorage.open(new NodeSource(VANILLA)));
+		const idOf = (p: string) => storage.idOf(p);
+		const bytes = await storage.readFile(idOf(adtPath('Azeroth', 32, 48)));
+		const before = parseVanillaAdt(bytes, idOf);
+		const wet = before.root.liquids[0].chunk;
+		const base = storage.pathOf(before.tex.diffuse[before.tex.chunks[0].layers[0].texture])!;
+		const cobble = 'Tileset\Elwynn\ElwynnCobblestoneBase.blp';
+		const alpha = new Uint8Array(PAINT_TEXELS * 3);
+		alpha.fill(128, 0, PAINT_TEXELS);
+		const out = rewriteVanillaAdt(bytes, 32, 48, {
+			remove: new Set(), add: [],
+			paint: { 0: { textures: [base, cobble], alpha } },
+			water: { 5: { type: 1, level: 200, cells: new Uint8Array(64).fill(1) }, [wet]: { type: 0, level: 0, cells: new Uint8Array(64) } },
+		});
+		const after = parseVanillaAdt(out, idOf);
+		// Chunk 0: the base and the new cobblestone, half and half (to 4-bit precision).
+		const layers = after.tex.chunks[0].layers;
+		expect(layers.map((l) => storage.pathOf(after.tex.diffuse[l.texture])!.toLowerCase())).toEqual([base.toLowerCase(), cobble.toLowerCase()]);
+		expect(Math.abs(after.tex.chunks[0].alpha[0][1000] - 128)).toBeLessThan(12);
+		// Other chunks keep their layers.
+		expect(after.tex.chunks[1]).toEqual(before.tex.chunks[1]);
+		// Chunk 5 is a lake at 200; the stream's chunk has none; the rest of the stream stays.
+		const lake = after.root.liquids.filter((l) => l.chunk === 5);
+		expect(lake).toHaveLength(1);
+		expect(lake[0].type).toBe(1);
+		expect([...lake[0].heights!].every((h) => h === 200)).toBe(true);
+		expect([...lake[0].exists!].every((e) => e === 1)).toBe(true);
+		expect(after.root.liquids.some((l) => l.chunk === wet)).toBe(false);
+		expect(after.root.liquids.length).toBe(before.root.liquids.length);
+	}, 60000);
+});
+
+describe('blend maps', () => {
+	it('turn 1.12 layers drawn one over the other into shares, and back', async () => {
+		const { sequentialToWeights, weightsToSequential } = await import('../src/formats/vanilla');
+		const { PAINT_TEXELS } = await import('../src/formats/surfaceEdits');
+		const maps = [128, 64, 200].map((v) => new Uint8Array(PAINT_TEXELS).fill(v));
+		const original = maps.map((m) => m.slice());
+		sequentialToWeights(maps);
+		// Layer 3 shows by its own alpha; the ones below by what the ones above leave.
+		expect(maps[2][0]).toBe(200);
+		expect(maps[1][0]).toBe(Math.round(64 * (1 - 200 / 255)));
+		expect(maps[0][0] + maps[1][0] + maps[2][0]).toBeLessThanOrEqual(255);
+		const back = weightsToSequential(maps);
+		for (let i = 0; i < 3; i++) expect(Math.abs(back[i][0] - original[i][0])).toBeLessThanOrEqual(3);
+	});
+});

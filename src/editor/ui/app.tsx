@@ -110,14 +110,16 @@ function MenuBar({ ctx }: { ctx: EditorContext }) {
 	const exportMap = async () => {
 		const models = doc.entries().filter((e) => /^\d+:(m2|wmo):/.test(e.id));
 		const terrain = doc.terrainEdits();
-		if (!models.length && !Object.keys(terrain).length) {
-			ctx.notify('No ground or map model edits to export (NPCs and objects go through the SQL export)');
+		const paint = doc.paintEdits();
+		const water = doc.waterEdits();
+		if (!models.length && !Object.keys(terrain).length && !Object.keys(paint).length && !Object.keys(water).length) {
+			ctx.notify('No ground, paint, water or map model edits to export (NPCs and objects go through the SQL export)');
 			return;
 		}
 		ctx.notify('Making the map patch…');
 		let patch;
 		try {
-			patch = await ctx.storage.exportMapPatch(models, terrain);
+			patch = await ctx.storage.exportMapPatch(models, terrain, paint, water);
 		} catch (e) {
 			ctx.notify(`Could not export the map: ${(e as Error).message}`);
 			return;

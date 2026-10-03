@@ -654,3 +654,64 @@ body.ws-edit {
 	color: var(--wow-grey);
 	font-variant-numeric: tabular-nums;
 }
+
+/* Terrain modes and the paint brush's textures */
+.ed-modes {
+	justify-content: center;
+	margin: 2px 0 2px;
+}
+
+.ed-texture-chosen {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	font-size: 12px;
+	min-height: 40px;
+}
+
+.ed-texture-thumb {
+	flex: none;
+	width: 40px;
+	height: 40px;
+	background: rgba(0, 0, 0, 0.5) center / cover no-repeat;
+	border: 1px solid rgba(255, 255, 255, 0.18);
+	border-radius: 3px;
+}
+
+.ed-textures {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(78px, 1fr));
+	gap: 4px;
+}
+
+.ed-texture {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 3px;
+	width: 100%;
+	padding: 4px 2px;
+	font: 11px var(--wow-text);
+	color: var(--wow-white);
+	background: rgba(0, 0, 0, 0.35);
+	border: 1px solid transparent;
+	border-radius: 4px;
+	cursor: pointer;
+}
+
+.ed-texture span:last-child {
+	max-width: 100%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.ed-texture:hover {
+	border-color: rgba(255, 209, 0, 0.5);
+}
+
+.ed-texture.on {
+	color: var(--wow-yellow);
+	border-color: var(--wow-yellow);
+	background: rgba(255, 209, 0, 0.12);
+}

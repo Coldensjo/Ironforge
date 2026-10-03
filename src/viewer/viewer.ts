@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import type { SurfaceEdits } from '../formats/surfaceEdits';
 import { SunLight } from 'three/addons/lights/SunLight.js';
 import { TILE_SIZE } from '../formats/adt';
 import type { KnownMap } from '../explorer/maps';
@@ -924,6 +925,8 @@ export class Viewer {
 			heightTilesIn: (minX, minZ, maxX, maxZ) => this.terrain.heightTilesIn(minX, minZ, maxX, maxZ),
 			heightsChanged: (tile) => this.terrain.heightsChanged(tile),
 			refreshTerrain: (tile) => this.terrain.refreshHeights(tile),
+			refreshSurface: (tile) => this.terrain.refreshSurface(tile),
+			surfaceTargetsIn: (minX, minZ, maxX, maxZ) => this.terrain.surfaceTargetsIn(minX, minZ, maxX, maxZ),
 			lockLook: () => controls.lock(),
 			get looking() {
 				return controls.locked;
@@ -940,6 +943,11 @@ export class Viewer {
 	/** Where the terrain gets the editor's height changes for a tile as it loads in detail. */
 	set heightDeltas(fn: (key: string) => Float32Array | undefined) {
 		this.terrain.heightDelta = fn;
+	}
+
+	/** Where the terrain gets the editor's paint and water for a tile as it's built. */
+	set surfaceEdits(fn: (key: string) => SurfaceEdits | undefined) {
+		this.terrain.surfaceEdits = fn;
 	}
 
 	/** In edit mode, the camera only flies while the right mouse button is held (looking around). */

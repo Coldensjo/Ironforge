@@ -1,6 +1,7 @@
 import { signal } from '@preact/signals';
 import * as THREE from 'three';
 import { HALF_CELL, latticeBox, latticeIndex, type HeightTile } from '../viewer/terrainEdit';
+import { BrushRing, falloff } from './brushRing';
 import type { EditDocument, TerrainPatch } from './document';
 
 export type BrushKind = 'raise' | 'lower' | 'flatten' | 'smooth';
@@ -18,8 +19,6 @@ export interface SculptHost {
 const MAX_LIFT = 30;
 /** How quickly flatten and smooth close the gap at full strength (share per second, roughly). */
 const MAX_BLEND = 12;
-/** Points on the brush circle. */
-const RING_POINTS = 72;
 
 /**
  * Lattice neighbours a point is smoothed towards: for an outer point the four outer points
@@ -51,22 +50,15 @@ export class TerrainBrush {
 	readonly softness = signal(0.6);
 
 	private stroke: Stroke | null = null;
-	private readonly outer: THREE.LineLoop;
-	private readonly inner: THREE.LineLoop;
+	private readonly ring: BrushRing;
 
 	constructor(private readonly host: SculptHost, private readonly doc: EditDocument) {
-		const ring = (color: number, opacity: number) => {
-			const geometry = new THREE.BufferGeometry();
-			geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(RING_POINTS * 3), 3));
-			const line = new THREE.LineLoop(geometry, new THREE.LineBasicMaterial({ color, transparent: true, opacity, depthTest: false, depthWrite: false, fog: false }));
-			line.renderOrder = 11;
-			line.frustumCulled = false;
-			line.visible = false;
-			host.scene.add(line);
-			return line;
-		};
-		this.outer = ring(0xffd100, 0.95);
-		this.inner = ring(0xffd100, 0.45);
+		this.ring = new BrushRing(host.scene);
+	}
+
+	/** Hides the outline (another tool is in use). */
+	hide(): void {
+		this.ring.show(null, 0, 0, 0, () => 0);
 	}
 
 	get active(): boolean {
@@ -78,15 +70,9 @@ export class TerrainBrush {
 	 * nowhere) and, mid-stroke, works the ground there. invert swaps raise and lower (Shift).
 	 */
 	update(center: THREE.Vector3 | null, groundAt: (x: number, z: number) => number, invert: boolean): void {
-		const shown = center !== null;
-		this.outer.visible = this.inner.visible = shown;
-		if (!center) return;
-		const r = this.size.value;
-		this.drawRing(this.outer, center, r, groundAt);
-		this.drawRing(this.inner, center, r * (1 - this.softness.value), groundAt);
 		const color = this.kind.value === 'lower' !== invert ? 0x7fb2ff : 0xffd100;
-		(this.outer.material as THREE.LineBasicMaterial).color.setHex(color);
-		(this.inner.material as THREE.LineBasicMaterial).color.setHex(color);
+		this.ring.show(center, this.size.value, this.softness.value, color, groundAt);
+		if (!center) return;
 		const stroke = this.stroke;
 		if (!stroke) return;
 		const now = performance.now();
@@ -140,7 +126,6 @@ export class TerrainBrush {
 			: this.kind.value;
 		const lift = MAX_LIFT * strength * strength * dt;
 		const blend = MAX_BLEND * strength * dt;
-		const hard = r * (1 - this.softness.value);
 		for (const tile of this.host.heightTilesIn(center.x - r, center.z - r, center.x + r, center.z + r)) {
 			const box = latticeBox(tile, center.x, center.z, r);
 			if (!box) continue;
@@ -157,11 +142,8 @@ export class TerrainBrush {
 				for (let hx = x0; hx <= x1; hx++) {
 					const i = latticeIndex(hx, hz);
 					if (i < 0) continue;
-					const d = Math.hypot(tile.originX + hx * HALF_CELL - center.x, tile.originZ + hz * HALF_CELL - center.z);
-					if (d > r) continue;
-					// Full inside the hard part, easing to nothing at the edge.
-					const t = d <= hard ? 0 : (d - hard) / (r - hard);
-					const f = 1 - t * t * (3 - 2 * t);
+					const f = falloff(Math.hypot(tile.originX + hx * HALF_CELL - center.x, tile.originZ + hz * HALF_CELL - center.z), r, this.softness.value);
+					if (!f) continue;
 					const h = tile.current[i];
 					let next = h;
 					if (kind === 'raise') next = h + lift * f;
@@ -187,17 +169,5 @@ export class TerrainBrush {
 			}
 			if (changes.length) tile.update(box);
 		}
-	}
-
-	private drawRing(line: THREE.LineLoop, center: THREE.Vector3, radius: number, groundAt: (x: number, z: number) => number): void {
-		const position = line.geometry.getAttribute('position') as THREE.BufferAttribute;
-		for (let k = 0; k < RING_POINTS; k++) {
-			const a = (k / RING_POINTS) * Math.PI * 2;
-			const x = center.x + Math.cos(a) * radius;
-			const z = center.z + Math.sin(a) * radius;
-			const y = groundAt(x, z);
-			position.setXYZ(k, x, (Number.isFinite(y) ? y : center.y) + 0.2, z);
-		}
-		position.needsUpdate = true;
 	}
 }

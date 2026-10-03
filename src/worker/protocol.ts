@@ -6,7 +6,8 @@ import type { LiquidLooks, LockKind } from '../explorer/clientDb';
 import type { MusicData, WmoArea } from '../explorer/music';
 import type { Place } from '../explorer/places';
 import type { ModelData, ObjectKind, Placement } from '../explorer/objects';
-import type { FarTile, InstanceMap, LoadedTexture, MapListing, NearTile, TemplateListing, TileTexture } from '../explorer/world';
+import type { FarTile, InstanceMap, LoadedTexture, MapListing, NearTile, TemplateListing, TerrainTexture, TileTexture } from '../explorer/world';
+import type { SurfaceEdits, TilePaint, TileWater } from '../formats/surfaceEdits';
 import type { MapPatch, ModelEdit } from '../explorer/mapExport';
 import type { SpawnInfo } from '../explorer/spawns';
 import type { Image } from '../formats/blp';
@@ -32,7 +33,10 @@ export interface StorageApi {
 	loadInstance(mapId: number): InstanceMap | null;
 	listMaps(): MapListing[];
 	loadTileTextures(wdtFdid: number, coords: [number, number][], maxSize: number, compressed: boolean): TileTexture[];
-	loadNearTile(wdtFdid: number, x: number, y: number, compressed: boolean): NearTile;
+	/** A tile in full detail, with the editor's surface edits (paint, water) applied. */
+	loadNearTile(wdtFdid: number, x: number, y: number, compressed: boolean, edits?: SurfaceEdits): NearTile;
+	/** Textures the editor's paint brush can use. */
+	listTerrainTextures(): TerrainTexture[];
 	loadTextures(fdids: number[], compressed: boolean): LoadedTexture[];
 	loadTileObjects(wdtFdid: number, x: number, y: number): Placement[];
 	loadModels(models: { fdid: number; kind: ObjectKind; variant?: string }[]): (ModelData | null)[];
@@ -52,7 +56,7 @@ export interface StorageApi {
 	/** A new spawn of a template on a map (positioned at the origin). */
 	templateSpawn(type: 'npc' | 'object', entry: number, mapId: number, guid: number): SpawnInfo | null;
 	/** The editor's map changes (map model edits, ground height changes by map:x_y) as a client patch. */
-	exportMapPatch(models: ModelEdit[], terrain: Record<string, Float32Array>): MapPatch;
+	exportMapPatch(models: ModelEdit[], terrain: Record<string, Float32Array>, paint?: Record<string, TilePaint>, water?: Record<string, TileWater>): MapPatch;
 }
 
 export type AsyncStorageApi = {

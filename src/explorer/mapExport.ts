@@ -1,5 +1,6 @@
 import { TILE_SIZE } from '../formats/adt';
-import { listedIds, rewriteVanillaAdt, type AdtModel } from '../formats/adtWriter';
+import { listedIds, rewriteVanillaAdt, type AdtChanges, type AdtModel } from '../formats/adtWriter';
+import type { ChunkPaint, ChunkWater } from '../formats/surfaceEdits';
 import { adtPath } from '../formats/vanilla';
 import { writeMpq } from '../mpq/writer';
 import type { VanillaStorage } from '../mpq/vanillaStorage';
@@ -98,21 +99,31 @@ export async function buildMapPatch(
 	wdtOfMap: (mapId: number) => Promise<number | null>,
 	models: ModelEdit[],
 	terrain: Record<string, Float32Array>,
+	paint: Record<string, Record<number, ChunkPaint>> = {},
+	water: Record<string, Record<number, ChunkWater>> = {},
 ): Promise<MapPatch> {
 	const skipped: string[] = [];
 	/** Per tile (map:x_y): what to change there. */
-	const tiles = new Map<string, { remove: Set<number>; add: AdtModel[]; heights?: Float32Array }>();
+	const tiles = new Map<string, AdtChanges>();
 	const tile = (map: number, x: number, y: number) => {
 		const key = `${map}:${x}_${y}`;
 		let t = tiles.get(key);
 		if (!t) tiles.set(key, (t = { remove: new Set(), add: [] }));
 		return t;
 	};
-	for (const [key, heights] of Object.entries(terrain)) {
+	const tileOf = (key: string) => {
 		const [map, xy] = key.split(':');
 		const [x, y] = xy.split('_').map(Number);
-		tile(Number(map), x, y).heights = heights;
+		return tile(Number(map), x, y);
+	};
+	for (const [key, heights] of Object.entries(terrain)) tileOf(key).heights = heights;
+	for (const [key, chunks] of Object.entries(paint)) {
+		// Painted textures by path; ones named by file ID came from the modern client.
+		const usable = Object.fromEntries(Object.entries(chunks).filter(([, p]) => p.textures.every((t) => !t.startsWith('#'))));
+		if (Object.keys(usable).length < Object.keys(chunks).length) skipped.push(`Tile ${key}: paint made on another client`);
+		if (Object.keys(usable).length) tileOf(key).paint = usable;
 	}
+	for (const [key, chunks] of Object.entries(water)) tileOf(key).water = chunks;
 
 	const boxes = new Map<string, Promise<{ min: Vec3; max: Vec3 }>>();
 	const boxOf = (fdid: number, kind: 'm2' | 'wmo') => {
@@ -175,20 +186,20 @@ export async function buildMapPatch(
 	const files: { name: string; data: Uint8Array }[] = [];
 	const written: string[] = [];
 	for (const [key, change] of tiles) {
-		if (!change.heights && !change.remove.size && !change.add.length) continue;
+		if (!change.heights && !change.remove.size && !change.add.length && !change.paint && !change.water) continue;
 		const [mapText, xy] = key.split(':');
 		const [x, y] = xy.split('_').map(Number);
 		const wdtFdid = await wdtOfMap(Number(mapText));
 		const root = wdtFdid !== null ? (await maps.wdt(wdtFdid)).tiles[y * 64 + x]?.files.root : 0;
 		if (!wdtFdid || !root) {
-			if (change.heights || change.add.length) skipped.push(`Tile ${key}: the map has no such tile`);
+			if (change.heights || change.add.length || change.paint || change.water) skipped.push(`Tile ${key}: the map has no such tile`);
 			continue;
 		}
 		const folder = storage.pathOf(wdtFdid)!.split('\\')[2];
 		try {
 			const bytes = await storage.readFile(root);
 			// A tile that might have listed a moved model, and doesn't, stays as it is.
-			if (!change.heights && !change.add.length) {
+			if (!change.heights && !change.add.length && !change.paint && !change.water) {
 				const listed = listedIds(bytes);
 				if (![...change.remove].some((uid) => listed.has(uid))) continue;
 			}
